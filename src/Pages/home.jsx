@@ -264,7 +264,7 @@ const Home = () => {
         )}
       </AnimatePresence>
 
-      <Footer />
+      <Footer/>
     </div>
   );
 };
