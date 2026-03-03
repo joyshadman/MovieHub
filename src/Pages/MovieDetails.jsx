@@ -173,7 +173,7 @@ const MovieDetails = () => {
                 onClick={() => setShowPlayer(true)}
                 className="flex items-center gap-4 bg-white text-black px-12 py-6 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:bg-red-600 hover:text-white transition-all duration-500"
               >
-                <Play size={20} fill="currentColor" /> Initialize Terminal
+                <Play size={20} fill="currentColor" /> Watch Now
               </motion.button>
             </motion.div>
 
