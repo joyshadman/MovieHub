@@ -198,7 +198,7 @@ const Navbar = () => {
               <div className="flex justify-between items-center mb-12">
                 <div className="flex items-center gap-3">
                   <Play size={18} className="text-red-600" fill="currentColor" />
-                  <span className="font-black text-white italic text-sm tracking-tighter uppercase">MH Portal</span>
+                  <span className="font-black text-white italic text-sm tracking-tighter uppercase">Acount Portal</span>
                 </div>
                 <button onClick={() => setShowMobileMenu(false)} className="p-3 bg-white/5 rounded-full text-white"><X size={20}/></button>
               </div>
@@ -212,7 +212,7 @@ const Navbar = () => {
                   </div>
                 </div>
               ) : (
-                <button onClick={() => {setShowAuthModal(true); setShowMobileMenu(false);}} className="w-full p-5 bg-red-600 text-white rounded-[2rem] text-[10px] font-black uppercase mb-8 shadow-xl shadow-red-600/20">Initialize Access</button>
+                <button onClick={() => {setShowAuthModal(true); setShowMobileMenu(false);}} className="w-full p-5 bg-red-600 text-white rounded-[2rem] text-[10px] font-black uppercase mb-8 shadow-xl shadow-red-600/20">Sign In</button>
               )}
 
               <div className="flex flex-col gap-2">
