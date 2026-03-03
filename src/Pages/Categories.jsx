@@ -1,16 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sword, Zap, Ghost, Drama, Film, Heart, ChevronLeft, Loader2 } from 'lucide-react';
+import { 
+  Sword, Zap, Ghost, Drama, Film, Heart, 
+  ChevronLeft, Loader2, Sparkles, Search, 
+  Compass, Music 
+} from 'lucide-react';
 import { movieApi } from '../services/movieApi';
 import MovieCard from '../components/MovieCard';
 
 const genreList = [
+  { id: 'bollywood', name: 'Bollywood', icon: <Music size={24} />, color: 'from-orange-600/20' },
   { id: 28, name: 'Action', icon: <Sword size={24} />, color: 'from-red-600/20' },
   { id: 878, name: 'Sci-Fi', icon: <Zap size={24} />, color: 'from-blue-600/20' },
   { id: 27, name: 'Horror', icon: <Ghost size={24} />, color: 'from-purple-600/20' },
   { id: 35, name: 'Comedy', icon: <Drama size={24} />, color: 'from-yellow-600/20' },
   { id: 18, name: 'Drama', icon: <Film size={24} />, color: 'from-emerald-600/20' },
   { id: 10749, name: 'Romance', icon: <Heart size={24} />, color: 'from-pink-600/20' },
+  { id: 16, name: 'Animation', icon: <Sparkles size={24} />, color: 'from-cyan-600/20' },
+  { id: 9648, name: 'Mystery', icon: <Search size={24} />, color: 'from-indigo-600/20' },
 ];
 
 const Categories = ({ user, onMovieClick }) => {
@@ -25,39 +32,32 @@ const Categories = ({ user, onMovieClick }) => {
   // --- FIXED CLICK HANDLER ---
   const handleMovieClick = (movie) => {
     if (typeof onMovieClick === 'function') {
-      // Create a clean object so the Detail page shows images instantly
-      const formattedMovie = {
-        ...movie,
-        // Map TMDB raw paths to the keys your Detail page uses
-        image: movie.poster_path 
-          ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` 
-          : movie.image,
-        backdrop: movie.backdrop_path 
-          ? `https://image.tmdb.org/t/p/original${movie.backdrop_path}` 
-          : movie.backdrop,
-        // Ensure type is set (Genre fetch is usually 'movie', but let's be safe)
-        type: movie.media_type || (movie.first_air_date ? 'tv' : 'movie'),
-        year: (movie.release_date || movie.first_air_date || '').split('-')[0],
-        title: movie.title || movie.name
-      };
-      
-      onMovieClick(formattedMovie);
+      onMovieClick(movie);
     } else {
       console.warn("Categories: onMovieClick prop is not a function", movie);
     }
   };
 
   // Fetch Logic
-  const fetchMovies = async (genreId, pageNum, isNewGenre = false) => {
+  const fetchMovies = async (genre, pageNum, isNewGenre = false) => {
     if (isLoading) return;
     setIsLoading(true);
     
     try {
-        const data = await movieApi.getByGenre(genreId, "movie", pageNum);
+        let data;
+        // Check if selected category is Bollywood or a standard TMDB Genre
+        if (genre.id === 'bollywood') {
+            data = await movieApi.getBollywood(pageNum);
+        } else {
+            data = await movieApi.getByGenre(genre.id, "movie", pageNum);
+        }
+
         setMovies(prev => isNewGenre ? data.results : [...prev, ...data.results]);
-        setHasMore(pageNum < data.totalPages);
+        // Support both data.totalPages and data.total_pages naming conventions
+        const total = data.totalPages || data.total_pages || 1;
+        setHasMore(pageNum < total);
     } catch (error) {
-        console.error("Genre fetch failed", error);
+        console.error("Fetch failed", error);
     } finally {
         setIsLoading(false);
     }
@@ -75,10 +75,10 @@ const Categories = ({ user, onMovieClick }) => {
     if (node) observer.current.observe(node);
   }, [isLoading, hasMore]);
 
-  // Effects
+  // Effect to trigger fetch on genre or page change
   useEffect(() => {
     if (selectedGenre) {
-      fetchMovies(selectedGenre.id, page, page === 1);
+      fetchMovies(selectedGenre, page, page === 1);
     }
   }, [selectedGenre, page]);
 
@@ -100,26 +100,26 @@ const Categories = ({ user, onMovieClick }) => {
             exit={{ opacity: 0, scale: 0.95 }}
             className="max-w-7xl mx-auto"
           >
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="mb-16">
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="mb-16 text-center md:text-left">
               <h1 className="text-5xl md:text-7xl font-black italic uppercase tracking-tighter text-white">
                 BROWSE <span className="text-red-600">GENRES</span>
               </h1>
-              <div className="h-1 w-20 bg-red-600 mt-4 shadow-[0_0_15px_rgba(220,38,38,0.8)]" />
+              <div className="h-1 w-20 bg-red-600 mt-4 mx-auto md:mx-0 shadow-[0_0_15px_rgba(220,38,38,0.8)]" />
             </motion.div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
               {genreList.map((g, i) => (
                 <motion.div
                   key={g.id}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                  whileHover={{ scale: 1.05, y: -10 }}
+                  transition={{ delay: i * 0.03 }}
+                  whileHover={{ scale: 1.05, y: -8 }}
                   onClick={() => handleGenreSelect(g)}
-                  className="h-52 rounded-[2.5rem] bg-white/[0.03] border border-white/5 backdrop-blur-xl flex flex-col items-center justify-center gap-5 relative overflow-hidden group cursor-pointer transition-all shadow-2xl"
+                  className="h-40 rounded-[2rem] bg-white/[0.03] border border-white/5 backdrop-blur-xl flex flex-col items-center justify-center gap-4 relative overflow-hidden group cursor-pointer transition-all shadow-2xl"
                 >
                   <div className={`absolute inset-0 bg-gradient-to-br ${g.color} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
-                  <div className="text-red-600 relative z-10 group-hover:scale-125 transition-all duration-500">
+                  <div className="text-red-600 relative z-10 group-hover:scale-110 transition-transform duration-500">
                     {g.icon}
                   </div>
                   <span className="text-[10px] font-black uppercase tracking-[0.3em] relative z-10 text-white/40 group-hover:text-white transition-colors">
@@ -139,20 +139,22 @@ const Categories = ({ user, onMovieClick }) => {
           >
             <div className="flex items-center gap-6 mb-12">
               <motion.button 
-                whileHover={{ scale: 1.1 }}
+                whileHover={{ scale: 1.1, backgroundColor: "rgba(220, 38, 38, 1)" }}
                 whileTap={{ scale: 0.9 }}
                 onClick={() => setSelectedGenre(null)}
-                className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-red-600 transition-all"
+                className="p-4 rounded-2xl bg-white/5 border border-white/10 transition-all shadow-xl"
               >
                 <ChevronLeft />
               </motion.button>
               <div>
-                <h2 className="text-red-600 font-black uppercase tracking-widest text-xs">Archives</h2>
-                <h1 className="text-5xl font-black italic uppercase">{selectedGenre.name}</h1>
+                <h2 className="text-red-600 font-black uppercase tracking-[0.3em] text-[10px]">Data Stream</h2>
+                <h1 className="text-4xl md:text-5xl font-black italic uppercase tracking-tighter">
+                    {selectedGenre.name}
+                </h1>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8">
               {movies.map((movie, index) => (
                 <div 
                   key={`${movie.id}-${index}`}
@@ -169,8 +171,8 @@ const Categories = ({ user, onMovieClick }) => {
 
             {isLoading && (
               <div className="flex flex-col items-center justify-center py-20">
-                <Loader2 className="w-10 h-10 text-red-600 animate-spin mb-4" />
-                <span className="text-[8px] font-black uppercase tracking-[0.5em] text-white/20">Loading More</span>
+                <Loader2 className="w-12 h-12 text-red-600 animate-spin mb-4 opacity-50" />
+                <span className="text-[9px] font-black uppercase tracking-[0.6em] text-white/20 animate-pulse">Syncing Archive</span>
               </div>
             )}
           </motion.div>

@@ -7,8 +7,8 @@ const MOCK_FALLBACKS = [
   {
     id: "mock1",
     title: "Interstellar",
-    backdrop_path: "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=2000",
-    poster_path: "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=1000",
+    backdrop_path: "/xJHbt7SqcBrUrGv8S78p8e49VQC.jpg",
+    poster_path: "/gEU2QniE6E77vl6P3pG2G1LpEbA.jpg",
     overview: "A team of explorers travel through a wormhole in space in an attempt to ensure humanity's survival.",
     release_date: "2014-11-05",
     vote_average: 8.7
@@ -41,11 +41,55 @@ const formatItem = (item, typeOverride = null) => {
     year: (item.release_date || item.first_air_date || "2026").split("-")[0],
     type: mediaType,
     rating: item.vote_average || 0,
-    overview: item.overview || "No description available."
+    overview: item.overview || "No description available.",
+    genres: item.genres?.map(g => g.name) || [],
+    runtime: item.runtime || (item.episode_run_time ? item.episode_run_time[0] : null),
+    tagline: item.tagline || "",
+    status: item.status || "Unknown"
   };
 };
 
 export const movieApi = {
+  // FETCH FULL DETAILS
+  getDetails: async (type, id) => {
+    try {
+      let endpoint = type === "tv" ? "tv" : "movie";
+      let response = await fetch(
+        `${BASE_URL}/${endpoint}/${id}?append_to_response=credits,similar,videos`, 
+        getOptions()
+      );
+
+      if (response.status === 404) {
+        endpoint = endpoint === "tv" ? "movie" : "tv";
+        response = await fetch(
+          `${BASE_URL}/${endpoint}/${id}?append_to_response=credits,similar,videos`, 
+          getOptions()
+        );
+      }
+
+      if (!response.ok) throw new Error("Signal Lost");
+      
+      const data = await response.json();
+      const actualType = data.first_air_date ? 'tv' : 'movie';
+      const formatted = formatItem(data, actualType);
+
+      return {
+        ...formatted,
+        cast: (data.credits?.cast || []).slice(0, 12).map(actor => ({
+          id: actor.id,
+          name: actor.name,
+          character: actor.character,
+          profile: actor.profile_path ? `${IMAGE_BASE}${actor.profile_path}` : FALLBACK
+        })),
+        similar: (data.similar?.results || []).map(s => formatItem(s, actualType)),
+        trailer: data.videos?.results?.find(v => v.type === "Trailer")?.key || null
+      };
+    } catch (error) {
+      console.error("Fetch Details Error:", error);
+      return null;
+    }
+  },
+
   getTrending: async (type = "movie") => {
     try {
       const response = await fetch(`${BASE_URL}/trending/${type}/day`, getOptions());
@@ -58,17 +102,22 @@ export const movieApi = {
     }
   },
 
-  search: async (query) => {
+  search: async (query, page = 1) => {
     try {
-      const response = await fetch(`${BASE_URL}/search/multi?query=${encodeURIComponent(query)}`, getOptions());
+      const response = await fetch(
+        `${BASE_URL}/search/multi?query=${encodeURIComponent(query)}&page=${page}`, 
+        getOptions()
+      );
       const data = await response.json();
-      return (data.results || []).filter(i => i.media_type !== "person").map(i => formatItem(i));
+      return {
+        results: (data.results || []).filter(i => i.media_type !== "person").map(i => formatItem(i)),
+        total_pages: data.total_pages || 1
+      };
     } catch (error) { 
-      return []; 
+      return { results: [], total_pages: 1 }; 
     }
   },
 
-  // FIXED: Added page parameter and returns object with results + totalPages
   getByGenre: async (genreId, type = "movie", page = 1) => {
     try {
       const response = await fetch(
@@ -85,32 +134,68 @@ export const movieApi = {
     }
   },
 
+  // NEW: BOLLYWOOD SPECIALIZED DISCOVER
+  getBollywood: async (page = 1) => {
+    try {
+      // Using Hindi language and India origin country filters
+      const response = await fetch(
+        `${BASE_URL}/discover/movie?with_original_language=hi&with_origin_country=IN&sort_by=popularity.desc&page=${page}`, 
+        getOptions()
+      );
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(i => formatItem(i, "movie")),
+        totalPages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], totalPages: 0 };
+    }
+  },
+
+  // NEW: ADVANCED DISCOVER (For Search Page Filters)
+  discover: async (type, { genre, year, page = 1 }) => {
+    try {
+      const genreParam = genre ? `&with_genres=${genre}` : '';
+      const yearParam = year ? `&primary_release_year=${year}` : '';
+      const endpoint = type === 'all' ? 'movie' : type;
+
+      const response = await fetch(
+        `${BASE_URL}/discover/${endpoint}?sort_by=popularity.desc${genreParam}${yearParam}&page=${page}`,
+        getOptions()
+      );
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(i => formatItem(i, endpoint)),
+        total_pages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], total_pages: 1 };
+    }
+  },
+
   getExternalIds: async (id, type) => {
     try {
-      const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
+      let endpoint = type === "tv" ? "tv" : "movie";
+      let response = await fetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
+      if (response.status === 404) {
+        endpoint = endpoint === "tv" ? "movie" : "tv";
+        response = await fetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
+      }
       const data = await response.json();
       return data.imdb_id || null; 
-    } catch (error) { 
-      return null; 
-    }
+    } catch (error) { return null; }
   },
 
-  getTVDetails: async (id) => {
+  getCredits: async (type, id) => {
     try {
-      const response = await fetch(`${BASE_URL}/tv/${id}`, getOptions());
-      return await response.json();
-    } catch (error) { 
-      return null; 
-    }
-  },
-
-  getSeasonDetails: async (id, seasonNum) => {
-    try {
-      const response = await fetch(`${BASE_URL}/tv/${id}/season/${seasonNum}`, getOptions());
-      return await response.json();
-    } catch (error) { 
-      return null; 
-    }
+      const endpoint = type === "tv" ? "tv" : "movie";
+      const response = await fetch(`${BASE_URL}/${endpoint}/${id}/credits`, getOptions());
+      const data = await response.json();
+      return (data.cast || []).slice(0, 10).map(actor => ({
+        name: actor.name,
+        character: actor.character,
+        profile: actor.profile_path ? `${IMAGE_BASE}${actor.profile_path}` : FALLBACK
+      }));
+    } catch (error) { return []; }
   }
 };

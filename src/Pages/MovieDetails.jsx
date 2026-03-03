@@ -1,133 +1,225 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Plus, Check, Star, Clock, Calendar, X, Globe, Share2, Info } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { 
+  Play, Star, X, Globe, Loader2, ArrowLeft, 
+  Calendar, Users, Cpu, Monitor, Zap 
+} from 'lucide-react';
 import { movieApi } from '../services/movieApi';
+import WatchPage from './Watch';
 
-const MovieDetails = ({ movie, user, onClose, onPlay, isSaved, onWatchlistToggle }) => {
+// Shared animation variants for a cleaner "DRY" code
+const fader = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } }
+};
+
+const staggerContainer = {
+  visible: { transition: { staggerChildren: 0.1 } }
+};
+
+const MovieDetails = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  
+  const [movie, setMovie] = useState(null);
   const [imdbId, setImdbId] = useState(null);
+  const [cast, setCast] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showPlayer, setShowPlayer] = useState(false);
 
   useEffect(() => {
-    const fetchId = async () => {
-      if (movie) {
-        setLoading(true);
-        const id = await movieApi.getExternalIds(movie.id, movie.type);
-        setImdbId(id);
+    const fetchFullDetails = async () => {
+      if (!id) return;
+      setLoading(true);
+      try {
+        const type = location.pathname.includes('/tv/') ? 'tv' : 'movie';
+        
+        // Parallel fetching for high performance
+        const [details, externalData, creditsData] = await Promise.all([
+          movieApi.getDetails(type, id),
+          movieApi.getExternalIds(id, type),
+          movieApi.getCredits(type, id)
+        ]);
+
+        if (details) {
+          setMovie(details);
+          setImdbId(externalData);
+          setCast(creditsData || []);
+        }
+      } catch (error) {
+        console.error("Transmission Error:", error);
+      } finally {
         setLoading(false);
       }
     };
-    fetchId();
-  }, [movie]);
 
-  if (!movie) return null;
+    fetchFullDetails();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [id, location.pathname]);
+
+  if (loading) return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-[#050505]">
+      <motion.div 
+        animate={{ scale: [1, 1.2, 1], rotate: 360 }}
+        transition={{ duration: 2, repeat: Infinity }}
+      >
+        <Loader2 className="w-12 h-12 text-red-600" />
+      </motion.div>
+      <p className="mt-4 text-[10px] font-black uppercase tracking-[0.5em] text-white/20">Syncing Data</p>
+    </div>
+  );
+
+  if (!movie) return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-[#050505]">
+      <X size={48} className="text-red-600 mb-4" />
+      <button onClick={() => navigate('/')} className="text-white border-b border-red-600 pb-1 font-black uppercase text-xs tracking-widest">Return Home</button>
+    </div>
+  );
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 md:p-8"
-    >
-      {/* Background Layer with Blurred Backdrop */}
-      <div className="absolute inset-0 z-0 overflow-hidden">
-        <motion.img 
-          initial={{ scale: 1.2, opacity: 0 }}
-          animate={{ scale: 1, opacity: 0.3 }}
-          src={movie.backdrop} 
-          className="w-full h-full object-cover blur-sm" 
-          alt="" 
+    <div className="min-h-screen bg-[#050505] text-white selection:bg-red-600 overflow-x-hidden">
+      
+      {/* --- WATCH INTERFACE MODAL --- */}
+      <AnimatePresence>
+        {showPlayer && (
+          <WatchPage movie={movie} onClose={() => setShowPlayer(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* --- DYNAMIC GLASS BACKDROP --- */}
+      <div className="fixed inset-0 z-0">
+        <motion.div 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 0.3 }}
+          className="absolute inset-0 bg-cover bg-center transition-opacity duration-1000"
+          style={{ backgroundImage: `url(${movie.backdrop})` }}
         />
-        <div className="absolute inset-0 bg-linear-to-t from-[#050505] via-[#050505]/80 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050505]/80 to-[#050505]" />
+        <div className="absolute inset-0 backdrop-blur-[80px]" />
       </div>
 
-      <motion.div 
-        initial={{ y: 50, opacity: 0, scale: 0.95 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
-        className="relative z-10 w-full max-w-6xl bg-zinc-900/40 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col md:flex-row"
-      >
-        {/* Close Button */}
-        <button 
-          onClick={onClose}
-          className="absolute top-6 right-6 z-50 p-2.5 bg-white/5 hover:bg-red-600 rounded-full text-white transition-all border border-white/10 group"
+      <div className="relative z-10 max-w-7xl mx-auto px-6 py-20 lg:py-32">
+        
+        {/* Navigation */}
+        <motion.button 
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          onClick={() => navigate(-1)}
+          className="group flex items-center gap-3 text-white/40 hover:text-white transition-all uppercase font-black text-[10px] tracking-[0.4em] mb-16"
         >
-          <X size={20} className="group-hover:rotate-90 transition-transform" />
-        </button>
+          <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" /> Exit Archive
+        </motion.button>
 
-        {/* Poster Section */}
-        <div className="w-full md:w-[35%] p-8 lg:p-12">
-          <motion.div 
-            whileHover={{ y: -10 }}
-            className="relative aspect-[2/3] rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10"
-          >
-            <img src={movie.image} className="w-full h-full object-cover" alt={movie.title} />
-            <div className="absolute inset-0 bg-linear-to-t from-black/60 to-transparent" />
+        <motion.div 
+          variants={staggerContainer}
+          initial="hidden"
+          animate="visible"
+          className="grid grid-cols-1 lg:grid-cols-[450px_1fr] gap-12 lg:gap-24"
+        >
+          
+          {/* --- ASSET COLUMN (POSTER) --- */}
+          <motion.div variants={fader} className="flex flex-col gap-8">
+            <div className="relative group">
+              <div className="absolute -inset-1 bg-gradient-to-r from-red-600/20 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+              <div className="relative aspect-[2/3] rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                <img src={movie.image} className="w-full h-full object-cover" alt={movie.title} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white/5 border border-white/10 backdrop-blur-xl p-5 rounded-[2rem] flex flex-col items-center justify-center">
+                <Calendar size={18} className="text-red-600 mb-2" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-white/30">Release</span>
+                <span className="text-sm font-bold">{movie.year}</span>
+              </div>
+              <div className="bg-white/5 border border-white/10 backdrop-blur-xl p-5 rounded-[2rem] flex flex-col items-center justify-center">
+                <Star size={18} className="text-amber-500 fill-amber-500 mb-2" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-white/30">Rating</span>
+                <span className="text-sm font-bold">{movie.rating?.toFixed(1)}</span>
+              </div>
+            </div>
           </motion.div>
-        </div>
 
-        {/* Content Section */}
-        <div className="w-full md:w-[65%] p-8 lg:p-12 md:pl-0 flex flex-col justify-center">
-          <div className="flex flex-wrap items-center gap-3 mb-6">
-            <span className="px-3 py-1 bg-red-600/20 text-red-500 border border-red-500/30 rounded-full text-[10px] font-black uppercase tracking-widest">
-              {movie.type === 'tv' ? 'Series' : 'Movie'}
-            </span>
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] font-black uppercase tracking-widest text-amber-400">
-              <Star size={12} fill="currentColor" /> {movie.rating?.toFixed(1)}
-            </span>
-            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
-              {movie.year} • {loading ? 'Fetching IDs...' : `IMDb: ${imdbId || 'N/A'}`}
-            </span>
-          </div>
+          {/* --- METADATA COLUMN --- */}
+          <div className="flex flex-col">
+            <motion.div variants={fader} className="flex items-center gap-4 mb-6">
+              <span className="px-4 py-1 rounded-full bg-red-600 text-[10px] font-black uppercase tracking-widest">
+                {movie.type === 'tv' ? 'Series' : 'Feature'}
+              </span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-white/30">8K Mastering</span>
+            </motion.div>
 
-          <h1 className="text-4xl lg:text-6xl font-black italic text-white uppercase tracking-tighter leading-none mb-6 drop-shadow-2xl">
-            {movie.title}
-          </h1>
-
-          <p className="text-white/60 text-sm lg:text-base leading-relaxed mb-10 max-w-2xl font-medium">
-            {movie.overview || "Deep within the Streamium archives, this title awaits your discovery. High-fidelity playback and encrypted routing are ready for initialization."}
-          </p>
-
-          {/* Action Buttons */}
-          <div className="flex flex-wrap gap-4">
-            <motion.button 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => onPlay({ ...movie, imdb_id: imdbId })}
-              disabled={loading}
-              className="flex items-center gap-3 bg-white text-black px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-red-600 hover:text-white transition-all shadow-xl disabled:opacity-50"
+            <motion.h1 
+              variants={fader}
+              className="text-5xl md:text-7xl lg:text-9xl font-black italic tracking-tighter leading-none uppercase mb-10 text-transparent bg-clip-text bg-gradient-to-b from-white to-white/40"
             >
-              <Play size={18} fill="currentColor" /> {loading ? "Syncing..." : "Initialize Stream"}
-            </motion.button>
+              {movie.title}
+            </motion.h1>
 
-            <motion.button 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => onWatchlistToggle(movie)}
-              className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all border ${
-                isSaved 
-                ? 'bg-amber-500/10 border-amber-500 text-amber-500' 
-                : 'bg-white/5 border-white/10 text-white hover:bg-white/10'
-              }`}
+            <motion.p 
+              variants={fader}
+              className="text-white/50 text-lg lg:text-2xl font-medium leading-relaxed mb-12 max-w-3xl italic"
             >
-              {isSaved ? <Check size={18} /> : <Plus size={18} />}
-              {isSaved ? "In Watchlist" : "Add to Watchlist"}
-            </motion.button>
-          </div>
+              {movie.overview}
+            </motion.p>
 
-          {/* Metadata Footer */}
-          <div className="mt-12 pt-8 border-t border-white/5 flex gap-8">
-            <div className="flex flex-col gap-1">
-              <span className="text-[9px] text-white/20 font-black uppercase tracking-widest">Production</span>
-              <span className="text-[11px] text-white/60 font-bold flex items-center gap-2"><Globe size={12}/> Global Release</span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[9px] text-white/20 font-black uppercase tracking-widest">Quality</span>
-              <span className="text-[11px] text-white/60 font-bold flex items-center gap-2"><Info size={12}/> Ultra-HD Mirror</span>
-            </div>
+            <motion.div variants={fader} className="mb-20">
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setShowPlayer(true)}
+                className="flex items-center gap-4 bg-white text-black px-12 py-6 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:bg-red-600 hover:text-white transition-all duration-500"
+              >
+                <Play size={20} fill="currentColor" /> Initialize Terminal
+              </motion.button>
+            </motion.div>
+
+            {/* --- CAST GRID --- */}
+            <motion.div variants={fader} className="space-y-10">
+              <h3 className="text-[10px] font-black uppercase tracking-[0.6em] text-white/20 flex items-center gap-3">
+                <Users size={14} /> Personnel Registry
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
+                {cast.slice(0, 5).map((actor) => (
+                  <div key={actor.id} className="group cursor-default">
+                    <div className="aspect-square rounded-[1.5rem] overflow-hidden mb-3 border border-white/5 bg-white/5 group-hover:border-red-600/50 transition-colors duration-500">
+                      <img src={actor.profile} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700" alt={actor.name} />
+                    </div>
+                    <p className="text-[11px] font-black uppercase tracking-widest truncate">{actor.name}</p>
+                    <p className="text-[9px] font-bold text-white/20 uppercase truncate">{actor.character}</p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+
+            {/* --- SPECS FOOTER --- */}
+            <motion.div 
+              variants={fader}
+              className="mt-20 pt-10 border-t border-white/5 grid grid-cols-2 md:grid-cols-4 gap-8"
+            >
+              <StatBlock icon={<Zap size={14}/>} label="Resolution" value="4K_ATMOS" />
+              <StatBlock icon={<Cpu size={14}/>} label="Encoding" value="HEVC.H265" />
+              <StatBlock icon={<Monitor size={14}/>} label="IMDb ID" value={imdbId || 'REF_NULL'} />
+              <StatBlock icon={<Globe size={14}/>} label="Network" value="Secure_Node" />
+            </motion.div>
+
           </div>
-        </div>
-      </motion.div>
-    </motion.div>
+        </motion.div>
+      </div>
+    </div>
   );
 };
+
+// Reusable Stat Component for DRYness
+const StatBlock = ({ icon, label, value }) => (
+  <div className="space-y-2">
+    <span className="text-[9px] font-black uppercase tracking-widest text-white/20 flex items-center gap-2">
+      {icon} {label}
+    </span>
+    <p className="text-[11px] font-bold tracking-widest text-white/60 uppercase">{value}</p>
+  </div>
+);
 
 export default MovieDetails;
