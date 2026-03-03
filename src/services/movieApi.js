@@ -102,6 +102,38 @@ export const movieApi = {
     }
   },
 
+  // TOP RATED (Movies / TV)
+  getTopRated: async (type = "movie") => {
+    try {
+      const endpoint = type === "tv" ? "tv" : "movie";
+      const response = await fetch(`${BASE_URL}/${endpoint}/top_rated`, getOptions());
+      if (!response.ok) throw new Error("API Failure");
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(item => formatItem(item, type)),
+        total_pages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], total_pages: 1 };
+    }
+  },
+
+  // POPULAR (Movies / TV)
+  getPopular: async (type = "movie") => {
+    try {
+      const endpoint = type === "tv" ? "tv" : "movie";
+      const response = await fetch(`${BASE_URL}/${endpoint}/popular`, getOptions());
+      if (!response.ok) throw new Error("API Failure");
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(item => formatItem(item, type)),
+        total_pages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], total_pages: 1 };
+    }
+  },
+
   search: async (query, page = 1) => {
     try {
       const response = await fetch(

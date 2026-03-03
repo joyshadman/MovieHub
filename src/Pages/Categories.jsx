@@ -21,6 +21,16 @@ const genreList = [
   { id: 9648, name: 'Mystery', icon: <Search size={24} />, color: 'from-indigo-600/20' },
 ];
 
+// Map movie genre IDs to closest matching TV genre IDs
+const tvGenreMap = {
+  28: 10759,   // Action -> Action & Adventure
+  878: 10765,  // Sci-Fi -> Sci-Fi & Fantasy
+  27: 9648,    // Horror -> Mystery (closest TV mood)
+  35: 35,      // Comedy -> Comedy
+  18: 18,      // Drama -> Drama
+  10749: 10766 // Romance -> Soap / Romance-style TV
+};
+
 const Categories = ({ user, onMovieClick }) => {
   const [selectedGenre, setSelectedGenre] = useState(null);
   const [mediaType, setMediaType] = useState('movie');
@@ -41,7 +51,13 @@ const Categories = ({ user, onMovieClick }) => {
       if (genre.id === 'bollywood') {
         data = await movieApi.getBollywood(pageNum);
       } else {
-        data = await movieApi.getByGenre(genre.id, type, pageNum);
+        // For TV, remap numeric movie genre IDs to TV genre IDs when possible
+        const baseId = genre.id;
+        const tvId =
+          type === 'tv' && typeof baseId === 'number'
+            ? tvGenreMap[baseId] || baseId
+            : baseId;
+        data = await movieApi.getByGenre(tvId, type, pageNum);
       }
 
       const results = data?.results && Array.isArray(data.results) ? data.results : [];

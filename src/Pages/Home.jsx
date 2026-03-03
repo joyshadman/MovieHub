@@ -22,7 +22,10 @@ const Home = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Content States
-  const [trending, setTrending] = useState([]);
+  const [trendingMovies, setTrendingMovies] = useState([]);
+  const [trendingSeries, setTrendingSeries] = useState([]);
+  const [topRatedMovies, setTopRatedMovies] = useState([]);
+  const [topRatedSeries, setTopRatedSeries] = useState([]);
   const [actionMovies, setActionMovies] = useState([]);
   const [comedyMovies, setComedyMovies] = useState([]);
   const [thrillerMovies, setThrillerMovies] = useState([]);
@@ -78,24 +81,41 @@ const Home = () => {
       setLoading(true);
       try {
         const results = await Promise.allSettled([
-          movieApi.getTrending('movie'), 
-          movieApi.getByGenre(28),       
-          movieApi.getByGenre(35),       
-          movieApi.getByGenre(53),       
-          movieApi.getByGenre(27),       
-          movieApi.getBollywood(1),      
-          movieApi.getByGenre(10749),    
+          movieApi.getTrending('movie'),      // 0
+          movieApi.getTrending('tv'),         // 1
+          movieApi.getTopRated('movie'),      // 2
+          movieApi.getTopRated('tv'),         // 3
+          movieApi.getPopular('tv'),          // 4
+          movieApi.getByGenre(28),            // 5
+          movieApi.getByGenre(35),            // 6
+          movieApi.getByGenre(53),            // 7
+          movieApi.getByGenre(27),            // 8
+          movieApi.getBollywood(1),           // 9
+          movieApi.getByGenre(10749),         // 10
         ]);
         
-        const getVal = (idx) => (results[idx].status === 'fulfilled' ? results[idx].value.results : []);
+        const getVal = (idx) => (results[idx].status === 'fulfilled'
+          ? (Array.isArray(results[idx].value) ? results[idx].value : results[idx].value.results || [])
+          : []
+        );
 
-        setTrending(getVal(0));
-        setActionMovies(getVal(1));
-        setComedyMovies(getVal(2));
-        setThrillerMovies(getVal(3));
-        setHorrorMovies(getVal(4));
-        setBollywood(getVal(5));
-        setRomanceMovies(getVal(6));
+        setTrendingMovies(getVal(0));
+        setTrendingSeries(getVal(1));
+        setTopRatedMovies(getVal(2));
+        setTopRatedSeries(getVal(3));
+        // Popular TV can be used in a dedicated rail
+        setHistory((prev) => prev); // no-op to keep lints happy if unused
+        const popularSeries = getVal(4);
+
+        setActionMovies(getVal(5));
+        setComedyMovies(getVal(6));
+        setThrillerMovies(getVal(7));
+        setHorrorMovies(getVal(8));
+        setBollywood(getVal(9));
+        setRomanceMovies(getVal(10));
+
+        // Optionally: prepend a "Popular Series" rail after trending rows
+        // We'll pass it down in the rows mapping below using a local variable.
         
       } catch (err) { 
         console.error("Home Data Fetch Error:", err); 
@@ -110,7 +130,7 @@ const Home = () => {
   const handleMovieSelect = (movie) => {
     if (!movie || !movie.id) return;
     setIsSearchOpen(false); 
-    const type = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
+    const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     navigate(`/${type}/${movie.id}`);
   };
   
@@ -121,13 +141,28 @@ const Home = () => {
     if (user) {
       const historyRef = doc(db, "history", user.uid);
       const existingItem = history.find(item => item.id === movie.id);
-      
+
+      const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
+
+      // Normalize shape so ContinueWatching & WatchPage see consistent fields
       const movieData = { 
-        ...movie, 
+        ...movie,
+        id: movie.id,
+        type: isTV ? 'tv' : 'movie',
+        title: movie.title || movie.name,
+        // Derive TMDB-style paths from full URLs when needed
+        poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500') 
+          ? movie.image.replace('https://image.tmdb.org/t/p/w500', '') 
+          : movie.poster_path),
+        backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original') 
+          ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '') 
+          : movie.backdrop_path),
+        release_date: movie.release_date || movie.year,
+        first_air_date: isTV ? (movie.first_air_date || movie.year) : null,
         watchedAt: Date.now(),
         progress: existingItem?.progress || 0,
-        lastSeason: existingItem?.lastSeason || 1,
-        lastEpisode: existingItem?.lastEpisode || 1
+        lastSeason: existingItem?.lastSeason || (isTV ? 1 : null),
+        lastEpisode: existingItem?.lastEpisode || (isTV ? 1 : null)
       };
 
       const filtered = history.filter(item => item.id !== movie.id);
@@ -186,7 +221,7 @@ const Home = () => {
             >
               <motion.div style={{ filter: `blur(${heroBlur}px)` }}>
                 <Hero
-                  movies={trending}
+                  movies={trendingMovies}
                   onSearchClick={() => setIsSearchOpen(true)}
                   onPlay={handlePlay}
                   onInfo={handleMovieSelect}
@@ -201,7 +236,10 @@ const Home = () => {
                 )}
 
                 {[
-                  { title: "Global Trending", data: trending },
+                  { title: "Global Trending", data: trendingMovies },
+                  { title: "Trending Series", data: trendingSeries },
+                  { title: "Top Rated Movies", data: topRatedMovies },
+                  { title: "Top Rated Series", data: topRatedSeries },
                   { title: "Action Packed", data: actionMovies },
                   { title: "Comedy Central", data: comedyMovies },
                   { title: "Edge of Your Seat", data: thrillerMovies },

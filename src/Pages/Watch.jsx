@@ -46,8 +46,20 @@ const WatchPage = ({ movie, user, onClose }) => {
       
       const isTV = movie.type === 'tv' || !!movie.first_air_date;
 
+      // Normalize history entry so Home/ContinueWatching see same fields
       const historyItem = {
         ...movie,
+        id: movie.id,
+        type: isTV ? 'tv' : 'movie',
+        title: movie.title || movie.name,
+        poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500')
+          ? movie.image.replace('https://image.tmdb.org/t/p/w500', '')
+          : movie.poster_path),
+        backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original')
+          ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '')
+          : movie.backdrop_path),
+        release_date: movie.release_date || movie.year,
+        first_air_date: isTV ? (movie.first_air_date || movie.year) : null,
         watchedAt: Date.now(),
         // Save progress details specifically for TV Shows
         lastSeason: isTV ? s : null,

@@ -21,7 +21,7 @@ const AppContent = ({ user }) => {
     if (!movie || !movie.id) return;
 
     // Determine if it's a movie or tv show
-    const type = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
+    const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     const id = movie.id;
 
     // Navigate to the dynamic route

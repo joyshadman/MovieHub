@@ -144,9 +144,15 @@ const ContinueWatching = ({ user, onMovieClick }) => {
               <div 
                 className="relative aspect-video rounded-[2.5rem] overflow-hidden border border-white/10 bg-zinc-950 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 group-hover:border-red-600/40 group-hover:shadow-red-600/10"
               >
-                {/* Image Layer - pointer-events-none prevents dragging the image itself */}
+              {/* Image Layer - pointer-events-none prevents dragging the image itself */}
                 <img 
-                  src={`https://image.tmdb.org/t/p/w780${movie.backdrop_path || movie.poster_path}`} 
+                  src={
+                    movie.backdrop_path
+                      ? `https://image.tmdb.org/t/p/w780${movie.backdrop_path}`
+                      : movie.poster_path
+                      ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+                      : movie.backdrop || movie.image || 'https://via.placeholder.com/780x439?text=No+Image'
+                  } 
                   className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110 opacity-70 group-hover:opacity-50 pointer-events-none"
                   alt=""
                 />
@@ -154,7 +160,7 @@ const ContinueWatching = ({ user, onMovieClick }) => {
                 {/* Top Glass Badge */}
                 <div className="absolute top-4 left-4 flex gap-2 pointer-events-none">
                    <div className="px-3 py-1 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-[9px] font-black uppercase tracking-widest text-white/90">
-                     {movie.type === 'tv' ? 'Series' : 'Movie'}
+                     {(movie.type || (movie.first_air_date ? 'tv' : 'movie')) === 'tv' ? 'Series' : 'Movie'}
                    </div>
                 </div>
 
