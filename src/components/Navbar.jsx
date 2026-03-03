@@ -1,13 +1,14 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { 
-  Search, LogOut, Play, X, 
-  ShieldCheck, Home, LayoutGrid, Info, ChevronDown, 
-  Bookmark, User, Menu
+  Search, LogOut, Play, X, ShieldCheck, Home, 
+  LayoutGrid, Info, ChevronDown, Bookmark, Menu 
 } from 'lucide-react';
-import { auth, googleProvider } from './firebase';
+import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -15,6 +16,7 @@ const Navbar = () => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [historyCount, setHistoryCount] = useState(0);
   
   const navigate = useNavigate();
   const dropdownRef = useRef(null);
@@ -25,10 +27,16 @@ const Navbar = () => {
     
     const unsubscribe = auth.onAuthStateChanged((u) => {
       setUser(u);
-      if (u) setShowAuthModal(false);
+      if (u) {
+        setShowAuthModal(false);
+        // Sync history count for the badge
+        const historyRef = doc(db, "history", u.uid);
+        onSnapshot(historyRef, (docSnap) => {
+          if (docSnap.exists()) setHistoryCount(docSnap.data().items?.length || 0);
+        });
+      }
     });
 
-    // Close dropdown when clicking outside
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowDropdown(false);
@@ -43,18 +51,10 @@ const Navbar = () => {
     };
   }, []);
 
-  const handleSearchTrigger = () => {
-    navigate('/search');
-    setShowMobileMenu(false);
-  };
-
   const signIn = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-      setShowAuthModal(false);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handleSignOut = async () => {
@@ -119,77 +119,69 @@ const Navbar = () => {
             ))}
           </div>
 
-          {/* SEARCH BAR (Desktop) */}
-          <div className="flex-1 max-w-xs hidden md:block group cursor-pointer" onClick={handleSearchTrigger}>
+          {/* SEARCH BAR */}
+          <div className="flex-1 max-w-xs hidden md:block group cursor-pointer" onClick={() => navigate('/search')}>
             <div className="relative w-full">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-hover:text-red-600 transition-colors" size={14} />
               <div className="w-full bg-white/[0.02] border border-white/10 rounded-full py-2 pl-10 pr-4 text-[10px] text-white/20 transition-all group-hover:bg-white/[0.08] backdrop-blur-xl font-black uppercase tracking-widest">
-                Search
+                Search Database
               </div>
             </div>
           </div>
 
           {/* ACTIONS */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Mobile Search Icon */}
-            <button onClick={handleSearchTrigger} className="md:hidden p-3 bg-white/5 rounded-full border border-white/10 text-white active:scale-90 transition-transform">
+            <button onClick={() => navigate('/search')} className="md:hidden p-3 bg-white/5 rounded-full border border-white/10 text-white">
               <Search size={18} />
             </button>
 
             {user ? (
-              <div className="relative" ref={dropdownRef}>
-                {/* Profile Pic / Dropdown Toggle (Desktop) */}
+              <div className="relative hidden md:block" ref={dropdownRef}>
                 <motion.button 
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowDropdown(!showDropdown)}
-                  className="hidden md:flex items-center gap-2 p-1 pr-3 bg-white/[0.03] border border-white/10 rounded-full hover:bg-white/10 transition-all backdrop-blur-2xl"
+                  className="flex items-center gap-2 p-1 pr-3 bg-white/[0.03] border border-white/10 rounded-full hover:bg-white/10 transition-all backdrop-blur-2xl"
                 >
-                  <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-white/20 shadow-lg" />
+                  <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-white/20" />
                   <ChevronDown size={14} className={`text-white/40 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
                 </motion.button>
 
-                {/* Mobile Menu Toggle */}
-                <button 
-                  onClick={() => setShowMobileMenu(true)}
-                  className="md:hidden p-3 bg-white/5 rounded-full border border-white/10 text-white"
-                >
-                  <Menu size={18} />
-                </button>
-
-                {/* DESKTOP DROPDOWN MENU */}
                 <AnimatePresence>
                   {showDropdown && (
                     <motion.div 
                       variants={dropdownVariants}
-                      initial="hidden"
-                      animate="visible"
-                      exit="exit"
+                      initial="hidden" animate="visible" exit="exit"
                       className="absolute top-full right-0 mt-4 w-60 bg-black/60 backdrop-blur-[40px] border border-white/10 rounded-[2rem] p-3 shadow-2xl z-[150] overflow-hidden"
                     >
                       <div className="p-4 border-b border-white/5 mb-2">
-                        <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Identity</p>
+                        <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Verified Identity</p>
                         <p className="text-xs font-black text-white truncate">{user.displayName}</p>
                       </div>
-                      
-                      <Link to="/mylist" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/10 transition-all group">
-                        <Bookmark size={16} className="text-red-600" /> My Library
+                      <Link to="/mylist" onClick={() => setShowDropdown(false)} className="flex items-center justify-between w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/10 transition-all">
+                        <span className="flex items-center gap-3"><Bookmark size={16} className="text-red-600" /> My Library</span>
+                        {historyCount > 0 && <span className="bg-red-600 text-white text-[8px] px-2 py-0.5 rounded-full">{historyCount}</span>}
                       </Link>
-
                       <button onClick={handleSignOut} className="flex items-center gap-3 w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 transition-all">
-                        <LogOut size={16} /> Exit System
+                        <LogOut size={16} /> Disconnect
                       </button>
                     </motion.div>
                   )}
                 </AnimatePresence>
               </div>
             ) : (
-              <button onClick={() => setShowAuthModal(true)} className="bg-red-600 text-white px-7 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-xl shadow-red-600/20 active:scale-95 transition-all">Sign In</button>
+              <button onClick={() => setShowAuthModal(true)} className="hidden md:block bg-red-600 text-white px-7 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-xl shadow-red-600/20 active:scale-95 transition-all">
+                Sign In
+              </button>
             )}
+
+            <button onClick={() => setShowMobileMenu(true)} className="md:hidden p-3 bg-white/5 rounded-full border border-white/10 text-white">
+              <Menu size={18} />
+            </button>
           </div>
         </motion.nav>
       </div>
 
-      {/* MOBILE DRAWER (Hamburger Menu) */}
+      {/* MOBILE GLASSY DRAWER */}
       <AnimatePresence>
         {showMobileMenu && (
           <>
@@ -201,54 +193,55 @@ const Navbar = () => {
             <motion.div 
               initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 right-0 w-[80%] z-[210] bg-[#0a0a0a] border-l border-white/10 p-8 flex flex-col md:hidden"
+              className="fixed inset-y-0 right-0 w-[85%] z-[210] bg-[#050505]/90 backdrop-blur-2xl border-l border-white/10 p-8 flex flex-col md:hidden"
             >
               <div className="flex justify-between items-center mb-12">
                 <div className="flex items-center gap-3">
                   <Play size={18} className="text-red-600" fill="currentColor" />
-                  <span className="font-black text-white italic text-sm tracking-tighter">MH PORTAL</span>
+                  <span className="font-black text-white italic text-sm tracking-tighter uppercase">MH Portal</span>
                 </div>
                 <button onClick={() => setShowMobileMenu(false)} className="p-3 bg-white/5 rounded-full text-white"><X size={20}/></button>
               </div>
 
-              {user && (
+              {user ? (
                 <div className="flex items-center gap-4 p-5 bg-white/5 rounded-[2rem] border border-white/10 mb-8">
                   <img src={user.photoURL} className="w-12 h-12 rounded-full border border-white/20" alt="" />
                   <div className="flex flex-col">
                     <span className="text-[10px] font-black uppercase text-white tracking-widest">{user.displayName}</span>
-                    <span className="text-[8px] font-bold text-white/30 uppercase tracking-tighter">Verified Node</span>
+                    <span className="text-[8px] font-bold text-red-600 uppercase tracking-tighter">Verified Node</span>
                   </div>
                 </div>
+              ) : (
+                <button onClick={() => {setShowAuthModal(true); setShowMobileMenu(false);}} className="w-full p-5 bg-red-600 text-white rounded-[2rem] text-[10px] font-black uppercase mb-8 shadow-xl shadow-red-600/20">Initialize Access</button>
               )}
 
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
                 {navItems.map(item => (
                   <Link key={item.path} to={item.path} onClick={() => setShowMobileMenu(false)} className="flex items-center gap-4 p-5 text-[11px] font-black uppercase tracking-[0.3em] text-white/40 hover:text-white hover:bg-white/5 rounded-2xl transition-all">
                     {item.icon} {item.name}
                   </Link>
                 ))}
                 {user && (
-                  <Link to="/library" onClick={() => setShowMobileMenu(false)} className="flex items-center gap-4 p-5 text-[11px] font-black uppercase tracking-[0.3em] text-red-500 hover:bg-red-500/5 rounded-2xl transition-all">
-                    <Bookmark size={16}/> My Library
+                  <Link to="/mylist" onClick={() => setShowMobileMenu(false)} className="flex items-center justify-between p-5 text-[11px] font-black uppercase tracking-[0.3em] text-red-500 hover:bg-red-500/5 rounded-2xl transition-all">
+                    <span className="flex items-center gap-4"><Bookmark size={16}/> My Library</span>
+                    <span className="bg-red-600 text-white text-[9px] px-2 py-0.5 rounded-lg">{historyCount}</span>
                   </Link>
                 )}
               </div>
 
-              <div className="mt-auto">
-                {user ? (
-                  <button onClick={handleSignOut} className="w-full flex items-center justify-center gap-4 p-5 bg-white/5 text-[10px] font-black uppercase tracking-widest text-white/40 rounded-[2rem] border border-white/5">
-                    <LogOut size={16}/> Disconnect Session
+              {user && (
+                <div className="mt-auto">
+                  <button onClick={handleSignOut} className="w-full flex items-center justify-center gap-4 p-5 bg-white/5 text-[10px] font-black uppercase tracking-widest text-red-500 rounded-[2rem] border border-white/5">
+                    <LogOut size={16}/> Terminate Session
                   </button>
-                ) : (
-                  <button onClick={() => {setShowAuthModal(true); setShowMobileMenu(false);}} className="w-full p-5 bg-red-600 text-white rounded-[2rem] text-[10px] font-black uppercase shadow-xl">Initialize Access</button>
-                )}
-              </div>
+                </div>
+              )}
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
-      {/* AUTH MODAL (Google Sign In) */}
+      {/* AUTH MODAL */}
       <AnimatePresence>
         {showAuthModal && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
@@ -265,10 +258,10 @@ const Navbar = () => {
               <p className="text-white/30 text-[10px] uppercase font-bold mb-10 tracking-[0.3em]">Authorized Personnel Only</p>
               <button 
                 onClick={signIn}
-                className="w-full flex items-center justify-center gap-4 bg-white text-black py-5 rounded-[2.5rem] font-black uppercase tracking-widest text-[10px] hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-xl"
+                className="w-full flex items-center justify-center gap-4 bg-white text-black py-5 rounded-[2.5rem] font-black uppercase tracking-widest text-[10px] hover:bg-red-600 hover:text-white transition-all shadow-xl"
               >
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="" />
-                Continue with Google
+                Sync with Google
               </button>
             </motion.div>
           </div>

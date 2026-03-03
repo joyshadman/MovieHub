@@ -1,64 +1,49 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { History, Trash2, Play, Plus, Check, Trash, AlertTriangle, X } from 'lucide-react';
-import { db } from '../components/firebase'; // Ensure correct path
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
-import MovieCard from '../components/MovieCard';
+import { History, Trash2, Play, AlertTriangle, X } from 'lucide-react';
+import { db } from '../components/firebase';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const ContinueWatching = ({ user, onMovieClick }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [watchlist, setWatchlist] = useState([]);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   const scrollRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
-  const [dragMoved, setDragMoved] = useState(false);
+  const [hasMoved, setHasMoved] = useState(false); // Threshold flag
 
   useEffect(() => {
     if (!user) {
       setHistory([]);
-      setWatchlist([]);
       setLoading(false);
       return;
     }
 
     const historyRef = doc(db, "history", user.uid);
-    // Updated to "watchlists" to match MovieCard
-    const listRef = doc(db, "watchlists", user.uid);
-
     const unsubHistory = onSnapshot(historyRef, (docSnap) => {
       if (docSnap.exists()) {
-        const data = docSnap.data().items || [];
-        setHistory([...data].sort((a, b) => b.watchedAt - a.watchedAt));
-      } else { 
-        setHistory([]); 
+        const items = docSnap.data().items || [];
+        setHistory([...items].sort((a, b) => b.watchedAt - a.watchedAt));
+      } else {
+        setHistory([]);
       }
       setLoading(false);
     });
 
-    const unsubWatchlist = onSnapshot(listRef, (docSnap) => {
-      if (docSnap.exists()) {
-        // Updated to "items" to match MovieCard
-        setWatchlist(docSnap.data().items || []);
-      }
-    });
+    return () => unsubHistory();
+  }, [user?.uid]);
 
-    return () => { 
-      unsubHistory(); 
-      unsubWatchlist(); 
-    };
-  }, [user]);
-
+  // --- DRAG LOGIC WITH CLICK PROTECTION ---
   const handleMouseDown = (e) => {
     setIsDragging(true);
-    setDragMoved(false);
+    setHasMoved(false); // Reset movement on new click
     setStartX(e.pageX - scrollRef.current.offsetLeft);
     setScrollLeft(scrollRef.current.scrollLeft);
-    scrollRef.current.style.scrollBehavior = 'auto';
   };
 
   const handleMouseMove = (e) => {
@@ -66,160 +51,154 @@ const ContinueWatching = ({ user, onMovieClick }) => {
     e.preventDefault();
     const x = e.pageX - scrollRef.current.offsetLeft;
     const walk = (x - startX) * 2;
-    if (Math.abs(walk) > 8) setDragMoved(true);
+    
+    // If moved more than 5px, mark as drag to disable click
+    if (Math.abs(x - startX) > 5) {
+      setHasMoved(true);
+    }
+    
     scrollRef.current.scrollLeft = scrollLeft - walk;
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
-    if (scrollRef.current) scrollRef.current.style.scrollBehavior = 'smooth';
   };
 
-  const isMovieInList = (movieId) => watchlist.some(m => String(m.id) === String(movieId));
-
-  const toggleWatchlist = async (movie, e) => {
+  const handlePlayClick = (movie, e) => {
     e.stopPropagation();
-    if (dragMoved) return; 
-    if (!user) return toast.error("Please login first");
-    
-    const listRef = doc(db, "watchlists", user.uid);
-    try {
-      if (isMovieInList(movie.id)) {
-        const movieToRemove = watchlist.find(m => String(m.id) === String(movie.id));
-        await updateDoc(listRef, { items: arrayRemove(movieToRemove) });
-        toast.success("REMOVED FROM MY LIST");
-      } else {
-        await setDoc(listRef, { items: arrayUnion(movie) }, { merge: true });
-        toast.success("ADDED TO MY LIST");
-      }
-    } catch (err) { 
-      toast.error("SYNC ERROR"); 
+    // Only trigger play if the user didn't actually drag the slider
+    if (!hasMoved) {
+      onMovieClick(movie);
     }
   };
 
   const deleteFromHistory = async (movieId, e) => {
     e.stopPropagation();
-    if (dragMoved) return; 
-    if (!user) return;
+    if (hasMoved) return; // Prevent delete on drag
     try {
       const historyRef = doc(db, "history", user.uid);
-      await updateDoc(historyRef, { items: history.filter(item => item.id !== movieId) });
-      toast.success('DELETED FROM HISTORY');
-    } catch (err) { 
-      toast.error('DELETE ERROR'); 
-    }
+      const updated = history.filter(item => item.id !== movieId);
+      await updateDoc(historyRef, { items: updated });
+      toast.success('CLEARED FROM CACHE');
+    } catch (err) { toast.error('SYNC ERROR'); }
   };
 
   const clearAllHistory = async () => {
-    if (!user) return;
     try {
       await updateDoc(doc(db, "history", user.uid), { items: [] });
       setIsConfirmOpen(false);
-      toast.success('HISTORY WIPED');
-    } catch (err) {
-      toast.error('FAILED TO CLEAR');
-    }
+      toast.success('DATABASE WIPED');
+    } catch (err) { toast.error('WIPE FAILED'); }
   };
 
-  if (loading || history.length === 0) return null;
+  if (!user || loading || history.length === 0) return null;
 
   return (
-    <section className="relative px-4 md:px-12 mb-16 mt-24 overflow-hidden">
-      
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-3">
-          <div className="p-2 bg-red-600/10 rounded-xl border border-red-600/20 shadow-[0_0_20px_rgba(220,38,38,0.2)]">
-            <History className="text-red-600" size={20} />
+    <section className="relative px-4 md:px-12 py-12 mb-10 overflow-hidden select-none">
+      {/* Background Ambient Glow */}
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-red-600/10 blur-[120px] rounded-full pointer-events-none" />
+
+      {/* Header Section */}
+      <div className="flex items-end justify-between mb-10 relative z-10">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-red-500 font-black text-[10px] uppercase tracking-[0.3em]">
+            <span className="w-8 h-[1px] bg-red-500" />
+            Active Session
           </div>
-          <h2 className="text-xl md:text-2xl font-black uppercase tracking-tighter text-white">
-            Continue <span className="text-red-600 italic underline decoration-red-600/30 underline-offset-8">Watching</span>
+          <h2 className="text-3xl md:text-5xl font-black text-white uppercase tracking-tighter leading-none">
+            Continue <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-600 to-red-400 italic">Watching</span>
           </h2>
-        </motion.div>
+        </div>
 
         <motion.button 
-          whileHover={{ scale: 1.05 }}
+          whileHover={{ scale: 1.05, backgroundColor: 'rgba(220, 38, 38, 0.15)' }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setIsConfirmOpen(true)} 
-          className="group flex items-center gap-2 px-5 py-2 bg-white/5 hover:bg-red-600/10 border border-white/10 rounded-full transition-all backdrop-blur-md"
+          onClick={() => setIsConfirmOpen(true)}
+          className="flex items-center gap-2 px-6 py-3 bg-white/[0.03] border border-white/10 rounded-2xl backdrop-blur-md transition-all"
         >
-          <Trash2 size={14} className="text-white/40 group-hover:text-red-500" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-white/40 group-hover:text-white">Clear All</span>
+          <Trash2 size={15} className="text-red-500" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-white/80">Clear Archive</span>
         </motion.button>
       </div>
 
-      {/* DRAGGABLE ROW */}
+      {/* Horizontal Scroller */}
       <div 
         ref={scrollRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`flex gap-6 overflow-x-auto pb-10 select-none cursor-grab active:cursor-grabbing hide-scrollbar ${isDragging ? 'scroll-auto' : 'scroll-smooth'}`}
+        className="flex gap-6 overflow-x-auto pb-12 no-scrollbar cursor-grab active:cursor-grabbing relative z-10 scroll-smooth"
       >
-        <style>{`
-          .hide-scrollbar::-webkit-scrollbar { display: none; }
-          .hide-scrollbar { -webkit-overflow-scrolling: touch; }
-        `}</style>
-        
         <AnimatePresence mode='popLayout'>
           {history.map((movie, index) => (
             <motion.div 
               key={movie.id}
               layout
-              initial={{ opacity: 0, scale: 0.9, x: 30 }}
-              animate={{ opacity: 1, scale: 1, x: 0 }}
-              exit={{ opacity: 0, scale: 0.5, filter: 'blur(15px)' }}
-              transition={{ type: "spring", stiffness: 260, damping: 20, delay: index * 0.03 }}
-              className="relative shrink-0 w-[170px] sm:w-[210px] md:w-[280px] group"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, scale: 0.5, filter: 'blur(20px)' }}
+              transition={{ delay: index * 0.05, type: "spring", stiffness: 100 }}
+              className="relative shrink-0 w-[240px] md:w-[380px] group"
             >
-              <div className="relative rounded-[2.2rem] overflow-hidden shadow-2xl border border-white/5 transition-all duration-700 group-hover:border-red-600/50">
-                <MovieCard movie={movie} user={user} onClick={() => !dragMoved && onMovieClick(movie)} />
-                
-                {/* GLASSY OVERLAY (Secondary controls) */}
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  whileHover={{ opacity: 1 }}
-                  className="absolute inset-0 z-50 bg-black/60 backdrop-blur-xl flex flex-col items-center justify-center gap-6 p-4 opacity-0 pointer-events-none group-hover:pointer-events-auto transition-all duration-500"
-                >
-                  <div className="flex items-center gap-4">
-                    <motion.button 
-                      whileHover={{ scale: 1.2, rotate: 5 }} whileTap={{ scale: 0.8 }}
-                      onClick={(e) => toggleWatchlist(movie, e)}
-                      className="w-11 h-11 flex items-center justify-center rounded-full bg-white/10 border border-white/20 hover:bg-white/20"
-                    >
-                      {isMovieInList(movie.id) ? <Check size={20} className="text-red-500" /> : <Plus size={20} className="text-white" />}
-                    </motion.button>
+              <div 
+                className="relative aspect-video rounded-[2.5rem] overflow-hidden border border-white/10 bg-zinc-950 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 group-hover:border-red-600/40 group-hover:shadow-red-600/10"
+              >
+                {/* Image Layer - pointer-events-none prevents dragging the image itself */}
+                <img 
+                  src={`https://image.tmdb.org/t/p/w780${movie.backdrop_path || movie.poster_path}`} 
+                  className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110 opacity-70 group-hover:opacity-50 pointer-events-none"
+                  alt=""
+                />
 
-                    <motion.button 
-                      whileHover={{ scale: 1.15, backgroundColor: '#dc2626' }} whileTap={{ scale: 0.9 }}
-                      onClick={() => !dragMoved && onMovieClick(movie)}
-                      className="w-16 h-16 flex items-center justify-center rounded-full bg-red-600 text-white shadow-[0_0_30px_rgba(220,38,38,0.4)]"
-                    >
-                      <Play size={28} fill="white" />
-                    </motion.button>
+                {/* Top Glass Badge */}
+                <div className="absolute top-4 left-4 flex gap-2 pointer-events-none">
+                   <div className="px-3 py-1 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-[9px] font-black uppercase tracking-widest text-white/90">
+                     {movie.type === 'tv' ? 'Series' : 'Movie'}
+                   </div>
+                </div>
 
-                    <motion.button 
-                      whileHover={{ scale: 1.2, rotate: -5 }} whileTap={{ scale: 0.8 }}
+                {/* Play Center Overlay */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-500 bg-black/20">
+                   <motion.button 
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={(e) => handlePlayClick(movie, e)}
+                    className="w-16 h-16 flex items-center justify-center bg-white text-black rounded-full shadow-[0_0_40px_rgba(255,255,255,0.3)] z-30"
+                   >
+                     <Play size={24} fill="currentColor" className="ml-1" />
+                   </motion.button>
+                </div>
+
+                {/* Bottom Content Area */}
+                <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none">
+                  <div className="flex items-end justify-between gap-4 pointer-events-auto">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm md:text-lg font-black text-white uppercase tracking-tighter truncate leading-tight">
+                        {movie.title || movie.name}
+                      </h4>
+                      <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest mt-1">
+                        {movie.lastSeason ? `S${movie.lastSeason} • E${movie.lastEpisode}` : 'Resume Session'}
+                      </p>
+                    </div>
+                    
+                    <button 
                       onClick={(e) => deleteFromHistory(movie.id, e)}
-                      className="w-11 h-11 flex items-center justify-center rounded-full bg-white/10 border border-white/20 group/trash"
+                      className="p-3 bg-white/5 hover:bg-red-600/20 rounded-2xl border border-white/10 group/btn transition-all relative z-40"
                     >
-                      <Trash size={20} className="text-white/70 group-hover/trash:text-red-500 transition-colors" />
-                    </motion.button>
+                      <X size={16} className="text-white/40 group-hover/btn:text-white" />
+                    </button>
                   </div>
-                  <span className="text-[11px] font-black uppercase tracking-[0.25em] text-white/90 text-center px-4 line-clamp-1">
-                    {movie.title || movie.name}
-                  </span>
-                </motion.div>
 
-                {/* Progress Bar */}
-                <div className="absolute bottom-0 left-0 w-full h-1.5 bg-black/50 z-[60] overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${movie.progress || Math.floor(Math.random() * 50) + 40}%` }}
-                    transition={{ duration: 1.5, ease: "circOut" }}
-                    className="h-full bg-gradient-to-r from-red-900 via-red-600 to-red-400 shadow-[0_0_15px_#dc2626]"
-                  />
+                  {/* Progress Bar */}
+                  <div className="mt-4 relative h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${movie.progress || 60}%` }}
+                      transition={{ duration: 1.5, ease: "circOut" }}
+                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_15px_rgba(220,38,38,0.5)] rounded-full"
+                    />
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -227,60 +206,42 @@ const ContinueWatching = ({ user, onMovieClick }) => {
         </AnimatePresence>
       </div>
 
-      {/* CONFIRMATION POPUP */}
+      {/* MODAL - ULTRA GLASSY DELETE */}
       <AnimatePresence>
         {isConfirmOpen && (
-          <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsConfirmOpen(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
             />
             
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              initial={{ scale: 0.9, opacity: 0, y: 40 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-sm bg-[#0a0a0a] border border-white/10 rounded-[2.5rem] p-8 shadow-2xl overflow-hidden"
+              exit={{ scale: 0.8, opacity: 0, y: 40 }}
+              className="relative w-full max-w-md bg-zinc-900/40 backdrop-blur-[50px] border border-white/10 rounded-[3.5rem] p-12 text-center shadow-2xl"
             >
-              <div className="absolute -top-24 -right-24 w-48 h-48 bg-red-600/20 blur-[80px] rounded-full" />
-              
-              <div className="relative z-10 text-center">
-                <div className="w-16 h-16 bg-red-600/10 border border-red-600/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                  <AlertTriangle className="text-red-600" size={32} />
+              <div className="relative z-10">
+                <div className="w-24 h-24 bg-red-600/10 border border-red-600/20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8">
+                  <AlertTriangle className="text-red-600" size={48} />
                 </div>
-                
-                <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Clear History?</h3>
-                <p className="text-white/50 text-sm font-medium leading-relaxed mb-8">
-                  This action cannot be undone. Your progress will be wiped clean.
-                </p>
-                
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => setIsConfirmOpen(false)}
-                    className="flex-1 py-4 rounded-2xl bg-white/5 hover:bg-white/10 text-white font-bold transition-all border border-white/5"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={clearAllHistory}
-                    className="flex-1 py-4 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-bold transition-all shadow-lg shadow-red-600/20"
-                  >
-                    Wipe it
-                  </button>
+                <h3 className="text-3xl font-black text-white uppercase tracking-tighter mb-4">Purge History?</h3>
+                <p className="text-white/40 text-[12px] font-bold uppercase tracking-[0.2em] mb-10">Confirmed action will delete all cloud progress.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <button onClick={() => setIsConfirmOpen(false)} className="py-5 bg-white/5 hover:bg-white/10 text-white font-black uppercase tracking-widest text-[10px] rounded-[1.8rem] border border-white/5 transition-all">Abort</button>
+                  <button onClick={clearAllHistory} className="py-5 bg-red-600 text-white font-black uppercase tracking-widest text-[10px] rounded-[1.8rem] shadow-lg hover:bg-red-700 transition-all">Confirm</button>
                 </div>
               </div>
-
-              <button 
-                onClick={() => setIsConfirmOpen(false)}
-                className="absolute top-6 right-6 text-white/20 hover:text-white transition-colors"
-              >
-                <X size={20} />
-              </button>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </section>
   );
 };

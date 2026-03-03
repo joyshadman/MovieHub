@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -6,7 +7,6 @@ import { auth, db } from '../components/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // Components
-import Navbar from '../components/Navbar';
 import Hero from '../components/Hero';
 import MovieRow from '../components/MovieRow';
 import Footer from '../components/Footer';
@@ -18,10 +18,10 @@ import ContinueWatching from './ContinueWatching';
 const Home = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('home');
+  const [view, setView] = useState('home'); // 'home' or 'mylist'
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // Content States - Reordered based on your request
+  // Content States
   const [trending, setTrending] = useState([]);
   const [actionMovies, setActionMovies] = useState([]);
   const [comedyMovies, setComedyMovies] = useState([]);
@@ -50,6 +50,7 @@ const Home = () => {
     }
   };
 
+  // 1. AUTH & HISTORY SYNC
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((u) => {
       setUser(u);
@@ -59,26 +60,31 @@ const Home = () => {
           if (docSnap.exists()) {
             const historyData = docSnap.data().items || [];
             setHistory([...historyData].sort((a, b) => b.watchedAt - a.watchedAt));
-          } else { setHistory([]); }
+          } else { 
+            setHistory([]); 
+          }
         });
         return () => unsubscribeHistory();
-      } else { setHistory([]); }
+      } else { 
+        setHistory([]); 
+      }
     });
     return () => unsubscribeAuth();
   }, []);
 
+  // 2. DATA FETCHING
   useEffect(() => {
     const fetchContent = async () => {
       setLoading(true);
       try {
         const results = await Promise.allSettled([
-          movieApi.getTrending('movie'), // 0: Trending
-          movieApi.getByGenre(28),       // 1: Action
-          movieApi.getByGenre(35),       // 2: Comedy
-          movieApi.getByGenre(53),       // 3: Thriller
-          movieApi.getByGenre(27),       // 4: Horror
-          movieApi.getBollywood(1),      // 5: Bollywood
-          movieApi.getByGenre(10749),    // 6: Romance
+          movieApi.getTrending('movie'), 
+          movieApi.getByGenre(28),       
+          movieApi.getByGenre(35),       
+          movieApi.getByGenre(53),       
+          movieApi.getByGenre(27),       
+          movieApi.getBollywood(1),      
+          movieApi.getByGenre(10749),    
         ]);
         
         const getVal = (idx) => (results[idx].status === 'fulfilled' ? results[idx].value.results : []);
@@ -100,6 +106,7 @@ const Home = () => {
     fetchContent();
   }, []);
 
+  // 3. HANDLERS
   const handleMovieSelect = (movie) => {
     if (!movie || !movie.id) return;
     setIsSearchOpen(false); 
@@ -113,8 +120,19 @@ const Home = () => {
 
     if (user) {
       const historyRef = doc(db, "history", user.uid);
+      const existingItem = history.find(item => item.id === movie.id);
+      
+      const movieData = { 
+        ...movie, 
+        watchedAt: Date.now(),
+        progress: existingItem?.progress || 0,
+        lastSeason: existingItem?.lastSeason || 1,
+        lastEpisode: existingItem?.lastEpisode || 1
+      };
+
       const filtered = history.filter(item => item.id !== movie.id);
-      const updated = [{ ...movie, watchedAt: Date.now() }, ...filtered].slice(0, 20);
+      const updated = [movieData, ...filtered].slice(0, 20);
+      
       await setDoc(historyRef, { items: updated }, { merge: true });
     }
   };
@@ -130,20 +148,13 @@ const Home = () => {
         />
       </div>
 
-      <Navbar
-        user={user}
-        activeView={view}
-        onSearchIconClick={() => setIsSearchOpen(true)}
-        onHomeTrigger={() => { setView('home'); setIsSearchOpen(false); }}
-        onListTrigger={() => { setView('mylist'); setIsSearchOpen(false); }}
-        onMovieClick={handleMovieSelect}
-      />
 
       <main className="relative z-10 flex-grow">
         <AnimatePresence mode="wait">
           {loading ? (
             <motion.div 
               key="loader"
+              initial={{ opacity: 1 }}
               exit={{ opacity: 0, scale: 1.05, filter: "blur(20px)" }}
               className="h-screen flex flex-col items-center justify-center bg-[#020202] fixed inset-0 z-[200]"
             >
@@ -155,12 +166,24 @@ const Home = () => {
                <span className="mt-8 text-[8px] font-black uppercase tracking-[1.5em] text-white/30">Syncing Library</span>
             </motion.div>
           ) : view === 'mylist' ? (
-            <motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            /* MY LIST VIEW */
+            <motion.div 
+              key="list" 
+              initial={{ opacity: 0, y: 20 }} 
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
               <MyList user={user} onMovieClick={handleMovieSelect} onBack={() => setView('home')} />
             </motion.div>
           ) : (
-            <motion.div key="home" className="relative">
-              
+            /* HOME VIEW */
+            <motion.div 
+              key="home" 
+              className="relative"
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
               <motion.div style={{ filter: `blur(${heroBlur}px)` }}>
                 <Hero
                   movies={trending}
@@ -170,54 +193,33 @@ const Home = () => {
                 />
               </motion.div>
 
-              {/* REORDERED ROWS PER REQUEST */}
               <div className="relative mt-20 z-20 space-y-16 md:space-y-24 pb-40">
-                
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <ContinueWatching user={user} onMovieClick={handleMovieSelect} />
-                </motion.div>
+                {history.length > 0 && (
+                  <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+                    <ContinueWatching user={user} onMovieClick={handleMovieSelect} />
+                  </motion.div>
+                )}
 
-                {/* 1. Trending */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Global Trending" movies={trending} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 2. Action */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Action Packed" movies={actionMovies} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 3. Comedy */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Comedy Central" movies={comedyMovies} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 4. Thriller */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Edge of Your Seat" movies={thrillerMovies} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 5. Horror */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Horror Essentials" movies={horrorMovies} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 6. Bollywood */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Bollywood Specials" movies={bollywood} onMovieClick={handleMovieSelect} />
-                </motion.div>
-
-                {/* 7. Romance */}
-                <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                  <MovieRow title="Romantic Escapes" movies={romanceMovies} onMovieClick={handleMovieSelect} />
-                </motion.div>
+                {[
+                  { title: "Global Trending", data: trending },
+                  { title: "Action Packed", data: actionMovies },
+                  { title: "Comedy Central", data: comedyMovies },
+                  { title: "Edge of Your Seat", data: thrillerMovies },
+                  { title: "Horror Essentials", data: horrorMovies },
+                  { title: "Bollywood Specials", data: bollywood },
+                  { title: "Romantic Escapes", data: romanceMovies }
+                ].map((row, i) => (
+                  <motion.div key={i} variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+                    <MovieRow title={row.title} movies={row.data} onMovieClick={handleMovieSelect} />
+                  </motion.div>
+                ))}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
-      {/* SEARCH OVERLAY */}
+      {/* OVERLAYS */}
       <AnimatePresence>
         {isSearchOpen && (
           <motion.div 
@@ -229,7 +231,6 @@ const Home = () => {
         )}
       </AnimatePresence>
 
-      {/* WATCH OVERLAY */}
       <AnimatePresence>
         {playingMovie && (
           <Watch movie={playingMovie} user={user} onClose={() => setPlayingMovie(null)} />
