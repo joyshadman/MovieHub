@@ -3,7 +3,8 @@ import { motion, useSpring } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
 
-const MovieRow = ({ title, movies, onMovieClick, onAddToWatchlist }) => {
+// Added default value for movies to prevent "undefined" crashes
+const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
   const rowRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartX, setDragStartX] = useState(0);
@@ -12,13 +13,19 @@ const MovieRow = ({ title, movies, onMovieClick, onAddToWatchlist }) => {
 
   const rowScale = useSpring(1, { stiffness: 300, damping: 30 });
 
+  // Safety Check: Ensure movies is always an array before rendering
+  const safeMovies = Array.isArray(movies) ? movies : [];
+
   const handleMouseDown = (e) => {
+    // Only drag on left click
+    if (e.button !== 0) return;
+    
     setIsDragging(true);
     setMovement(0); 
     setDragStartX(e.pageX - rowRef.current.offsetLeft);
     setDragScrollLeft(rowRef.current.scrollLeft);
     
-    rowScale.set(0.99); // Subtle Apple-style press effect
+    rowScale.set(0.99); 
     document.body.style.userSelect = 'none';
     rowRef.current.style.scrollBehavior = 'auto';
   };
@@ -33,10 +40,10 @@ const MovieRow = ({ title, movies, onMovieClick, onAddToWatchlist }) => {
 
   const stopDragging = () => {
     if (!isDragging) return;
-    setTimeout(() => setIsDragging(false), 50); // Buffer to catch ghost clicks
+    setTimeout(() => setIsDragging(false), 50); 
     rowScale.set(1);
     document.body.style.userSelect = 'auto';
-    rowRef.current.style.scrollBehavior = 'smooth';
+    if (rowRef.current) rowRef.current.style.scrollBehavior = 'smooth';
   };
 
   const scroll = (direction) => {
@@ -49,36 +56,41 @@ const MovieRow = ({ title, movies, onMovieClick, onAddToWatchlist }) => {
     }
   };
 
-  if (!movies || movies.length === 0) return null;
+  // If there are no movies, don't render the row at all
+  if (safeMovies.length === 0) return null;
 
   return (
     <div className="group/row relative mb-12 px-6 md:px-14 select-none overflow-visible">
-      {/* Header */}
+      {/* Header with Neon Accent */}
       <div className="flex items-center justify-between mb-6">
         <div className="relative">
           <h2 className="text-xl md:text-2xl font-black italic uppercase tracking-tighter text-white/90">
             {title}
           </h2>
-          <div className="h-1 w-10 bg-red-600 rounded-full mt-1 shadow-[0_0_15px_#dc2626]" />
+          <motion.div 
+            initial={{ width: 0 }}
+            whileInView={{ width: 40 }}
+            className="h-1 bg-red-600 rounded-full mt-1 shadow-[0_0_15px_#dc2626]" 
+          />
         </div>
       </div>
 
       {/* Navigation - Glassy Apple Style */}
       <button 
         onClick={() => scroll('left')} 
-        className="absolute left-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-white/5 p-4 text-white opacity-0 backdrop-blur-3xl border border-white/10 transition-all hover:bg-white/10 hover:scale-110 group-hover/row:opacity-100 hidden md:flex items-center justify-center"
+        className="absolute left-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-black/40 p-4 text-white opacity-0 backdrop-blur-3xl border border-white/10 transition-all hover:bg-red-600 hover:scale-110 group-hover/row:opacity-100 hidden md:flex items-center justify-center shadow-2xl"
       >
         <ChevronLeft size={22} strokeWidth={3} />
       </button>
 
       <button 
         onClick={() => scroll('right')} 
-        className="absolute right-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-white/5 p-4 text-white opacity-0 backdrop-blur-3xl border border-white/10 transition-all hover:bg-white/10 hover:scale-110 group-hover/row:opacity-100 hidden md:flex items-center justify-center"
+        className="absolute right-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-black/40 p-4 text-white opacity-0 backdrop-blur-3xl border border-white/10 transition-all hover:bg-red-600 hover:scale-110 group-hover/row:opacity-100 hidden md:flex items-center justify-center shadow-2xl"
       >
         <ChevronRight size={22} strokeWidth={3} />
       </button>
 
-      {/* Row Container - Scrollbar Hidden */}
+      {/* Row Container */}
       <motion.div
         ref={rowRef}
         onMouseDown={handleMouseDown}
@@ -87,30 +99,30 @@ const MovieRow = ({ title, movies, onMovieClick, onAddToWatchlist }) => {
         onMouseLeave={stopDragging}
         style={{ 
           scale: rowScale,
-          // Inline CSS to force-hide scrollbars if tailwind plugin isn't installed
           scrollbarWidth: 'none', 
           msOverflowStyle: 'none',
           WebkitOverflowScrolling: 'touch'
         }}
         className="flex gap-5 overflow-x-auto pb-10 pt-2 cursor-grab active:cursor-grabbing [&::-webkit-scrollbar]:hidden"
       >
-        {movies.map((movie) => (
+        {safeMovies.map((movie) => (
           <div 
             key={movie.id} 
             className="min-w-[180px] md:min-w-[240px] lg:min-w-[280px] relative transition-transform duration-300"
             onClickCapture={(e) => {
-              if (movement > 6) {
+              // Prevent clicking the movie if the user was actually dragging
+              if (movement > 10) {
                 e.stopPropagation();
                 e.preventDefault();
               }
             }}
           >
-            {/* Click/Hover Blocker while dragging */}
-            {isDragging && movement > 6 && (
+            {/* Overlay to catch clicks during high-speed dragging */}
+            {isDragging && movement > 10 && (
               <div className="absolute inset-0 z-[100] cursor-grabbing bg-transparent" />
             )}
 
-            <div className={movement > 6 ? "pointer-events-none" : "pointer-events-auto"}>
+            <div className={movement > 10 ? "pointer-events-none" : "pointer-events-auto"}>
               <MovieCard 
                 movie={movie} 
                 onClick={onMovieClick} 
