@@ -16,6 +16,8 @@ const ContinueWatching = ({ user, onMovieClick }) => {
   const [startX, setStartX] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [hasMoved, setHasMoved] = useState(false); // Threshold flag
+  const [touchStartX, setTouchStartX] = useState(0);
+  const [touchScrollLeft, setTouchScrollLeft] = useState(0);
 
   useEffect(() => {
     if (!user) {
@@ -64,6 +66,21 @@ const ContinueWatching = ({ user, onMovieClick }) => {
     setIsDragging(false);
   };
 
+  const handleTouchStart = (e) => {
+    if (!scrollRef.current) return;
+    setHasMoved(false);
+    setTouchStartX(e.touches[0].clientX);
+    setTouchScrollLeft(scrollRef.current.scrollLeft);
+  };
+
+  const handleTouchMove = (e) => {
+    if (!scrollRef.current) return;
+    const x = e.touches[0].clientX;
+    const walk = (x - touchStartX) * 1.6;
+    if (Math.abs(x - touchStartX) > 6) setHasMoved(true);
+    scrollRef.current.scrollLeft = touchScrollLeft - walk;
+  };
+
   const handlePlayClick = (movie, e) => {
     e.stopPropagation();
     // Only trigger play if the user didn't actually drag the slider
@@ -72,12 +89,15 @@ const ContinueWatching = ({ user, onMovieClick }) => {
     }
   };
 
-  const deleteFromHistory = async (movieId, e) => {
+  const deleteFromHistory = async (movieId, movieType, e) => {
     e.stopPropagation();
     if (hasMoved) return; // Prevent delete on drag
     try {
       const historyRef = doc(db, "history", user.uid);
-      const updated = history.filter(item => item.id !== movieId);
+      const updated = history.filter(item => {
+        const itemType = item.type || (item.first_air_date ? 'tv' : 'movie');
+        return !(String(item.id) === String(movieId) && itemType === movieType);
+      });
       await updateDoc(historyRef, { items: updated });
       toast.success('CLEARED FROM CACHE');
     } catch (err) { toast.error('SYNC ERROR'); }
@@ -128,20 +148,24 @@ const ContinueWatching = ({ user, onMovieClick }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
         className="flex gap-6 overflow-x-auto pb-12 no-scrollbar cursor-grab active:cursor-grabbing relative z-10 scroll-smooth"
       >
         <AnimatePresence mode='popLayout'>
           {history.map((movie, index) => (
+            // Use id+type so movie and series with same ID can coexist
             <motion.div 
-              key={movie.id}
+              key={`${movie.type || (movie.first_air_date ? 'tv' : 'movie')}-${movie.id}`}
               layout
               initial={{ opacity: 0, x: 50 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, scale: 0.5, filter: 'blur(20px)' }}
               transition={{ delay: index * 0.05, type: "spring", stiffness: 100 }}
-              className="relative shrink-0 w-[240px] md:w-[380px] group"
+              className="relative shrink-0 w-[260px] sm:w-[320px] md:w-[380px] group"
             >
               <div 
+                onClick={(e) => handlePlayClick(movie, e)}
                 className="relative aspect-video rounded-[2.5rem] overflow-hidden border border-white/10 bg-zinc-950 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 group-hover:border-red-600/40 group-hover:shadow-red-600/10"
               >
               {/* Image Layer - pointer-events-none prevents dragging the image itself */}
@@ -189,7 +213,7 @@ const ContinueWatching = ({ user, onMovieClick }) => {
                     </div>
                     
                     <button 
-                      onClick={(e) => deleteFromHistory(movie.id, e)}
+                      onClick={(e) => deleteFromHistory(movie.id, movie.type || (movie.first_air_date ? 'tv' : 'movie'), e)}
                       className="p-3 bg-white/5 hover:bg-red-600/20 rounded-2xl border border-white/10 group/btn transition-all relative z-40"
                     >
                       <X size={16} className="text-white/40 group-hover/btn:text-white" />

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { motion, useSpring } from 'framer-motion';
+import { motion, useReducedMotion, useSpring } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
 
@@ -10,6 +10,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
   const [dragStartX, setDragStartX] = useState(0);
   const [dragScrollLeft, setDragScrollLeft] = useState(0);
   const [movement, setMovement] = useState(0);
+  const reducedMotion = useReducedMotion();
 
   const rowScale = useSpring(1, { stiffness: 300, damping: 30 });
 
@@ -25,7 +26,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
     setDragStartX(e.pageX - rowRef.current.offsetLeft);
     setDragScrollLeft(rowRef.current.scrollLeft);
     
-    rowScale.set(0.99); 
+    rowScale.set(reducedMotion ? 1 : 0.99); 
     document.body.style.userSelect = 'none';
     rowRef.current.style.scrollBehavior = 'auto';
   };
@@ -68,7 +69,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
             {title}
           </h2>
           <motion.div 
-            initial={{ width: 0 }}
+            initial={{ width: reducedMotion ? 40 : 0 }}
             whileInView={{ width: 40 }}
             className="h-1 bg-red-600 rounded-full mt-1 shadow-[0_0_15px_#dc2626]" 
           />
@@ -108,7 +109,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
         {safeMovies.map((movie) => (
           <div 
             key={movie.id} 
-            className="min-w-[180px] md:min-w-[240px] lg:min-w-[280px] relative transition-transform duration-300"
+            className="min-w-[130px] sm:min-w-[160px] md:min-w-[220px] lg:min-w-[260px] relative transition-transform duration-300"
             onClickCapture={(e) => {
               // Prevent clicking the movie if the user was actually dragging
               if (movement > 10) {

@@ -184,6 +184,41 @@ export const movieApi = {
     }
   },
 
+  // BANGLA MOVIES SPECIALIZED DISCOVER
+  getBanglaMovies: async (page = 1) => {
+    try {
+      const response = await fetch(
+        `${BASE_URL}/discover/movie?with_original_language=bn&sort_by=popularity.desc&page=${page}`,
+        getOptions()
+      );
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(i => formatItem(i, "movie")),
+        totalPages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], totalPages: 0 };
+    }
+  },
+
+  // ANIME DISCOVER (movies or TV)
+  getAnime: async (type = "tv", page = 1) => {
+    try {
+      const endpoint = type === "movie" ? "movie" : "tv";
+      const response = await fetch(
+        `${BASE_URL}/discover/${endpoint}?with_genres=16&with_original_language=ja&sort_by=popularity.desc&page=${page}`,
+        getOptions()
+      );
+      const data = await response.json();
+      return {
+        results: (data.results || []).map(i => formatItem(i, endpoint)),
+        totalPages: data.total_pages || 1
+      };
+    } catch (error) {
+      return { results: [], totalPages: 0 };
+    }
+  },
+
   // NEW: ADVANCED DISCOVER (For Search Page Filters)
   discover: async (type, { genre, year, page = 1 }) => {
     try {

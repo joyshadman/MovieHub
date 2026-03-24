@@ -11,6 +11,8 @@ import MovieCard from '../components/MovieCard';
 
 const genreList = [
   { id: 'bollywood', name: 'Bollywood', icon: <Music size={24} />, color: 'from-orange-600/20' },
+  { id: 'bangla', name: 'Bangla', icon: <Music size={24} />, color: 'from-emerald-600/20' },
+  { id: 'anime', name: 'Anime', icon: <Sparkles size={24} />, color: 'from-fuchsia-600/20' },
   { id: 28, name: 'Action', icon: <Sword size={24} />, color: 'from-red-600/20' },
   { id: 878, name: 'Sci-Fi', icon: <Zap size={24} />, color: 'from-blue-600/20' },
   { id: 27, name: 'Horror', icon: <Ghost size={24} />, color: 'from-purple-600/20' },
@@ -50,6 +52,10 @@ const Categories = ({ user, onMovieClick }) => {
       // Bollywood is strictly a Movie discover call in this API
       if (genre.id === 'bollywood') {
         data = await movieApi.getBollywood(pageNum);
+      } else if (genre.id === 'bangla') {
+        data = await movieApi.getBanglaMovies(pageNum);
+      } else if (genre.id === 'anime') {
+        data = await movieApi.getAnime(type, pageNum);
       } else {
         // For TV, remap numeric movie genre IDs to TV genre IDs when possible
         const baseId = genre.id;
@@ -97,8 +103,8 @@ const Categories = ({ user, onMovieClick }) => {
     setMovies([]);
     setPage(1);
     setHasMore(true);
-    // If user switches back to Bollywood, ensure type is movie
-    if (genre.id === 'bollywood') setMediaType('movie');
+    // If user switches to language-only categories, ensure type is movie
+    if (genre.id === 'bollywood' || genre.id === 'bangla') setMediaType('movie');
     setSelectedGenre(genre);
   };
 
@@ -175,7 +181,7 @@ const Categories = ({ user, onMovieClick }) => {
               </div>
 
               {/* Glassy Type Switcher */}
-              {selectedGenre.id !== 'bollywood' && (
+              {selectedGenre.id !== 'bollywood' && selectedGenre.id !== 'bangla' && (
                 <div className="flex bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-[2rem] self-start md:self-center">
                   <button 
                     onClick={() => toggleMediaType('movie')}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Search as SearchIcon, 
@@ -21,6 +21,7 @@ const SearchPage = ({ onMovieClick, externalQuery = "" }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [filter, setFilter] = useState("all");
   const navigate = useNavigate();
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (externalQuery) setQuery(externalQuery);
@@ -28,7 +29,7 @@ const SearchPage = ({ onMovieClick, externalQuery = "" }) => {
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
-      if (query.trim().length > 2) {
+      if (query.trim().length > 1) {
         setIsLoading(true);
         try {
           const response = await movieApi.search(query);
@@ -44,20 +45,48 @@ const SearchPage = ({ onMovieClick, externalQuery = "" }) => {
       } else if (query.length === 0) {
         setResults([]);
       }
-    }, 400);
+    }, 300);
 
     return () => clearTimeout(delayDebounceFn);
   }, [query]);
 
-  // Memoized Filter with safety check
+  const normalizeText = (value = "") =>
+    value.toString().toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+
+  const rankByQuery = (items, q) => {
+    const normalizedQuery = normalizeText(q);
+    if (!normalizedQuery) return items;
+
+    return [...items].sort((a, b) => {
+      const aTitle = normalizeText(a.title || a.name || "");
+      const bTitle = normalizeText(b.title || b.name || "");
+
+      const score = (title, item) => {
+        let s = 0;
+        if (title === normalizedQuery) s += 100;
+        if (title.startsWith(normalizedQuery)) s += 70;
+        if (title.includes(normalizedQuery)) s += 40;
+        const words = normalizedQuery.split(/\s+/).filter(Boolean);
+        const matchedWords = words.filter(w => title.includes(w)).length;
+        s += matchedWords * 10;
+        s += Math.min(Number(item.rating || item.vote_average || 0), 10);
+        return s;
+      };
+
+      return score(bTitle, b) - score(aTitle, a);
+    });
+  };
+
+  // Memoized Filter with safety check + ranking
   const filteredResults = useMemo(() => {
     if (!Array.isArray(results)) return []; // Safety guard
-    return results.filter(item => {
+    const filtered = results.filter(item => {
       if (filter === "all") return true;
       const itemType = item.type || item.media_type || (item.first_air_date ? 'tv' : 'movie');
       return itemType === filter;
     });
-  }, [results, filter]);
+    return rankByQuery(filtered, query);
+  }, [results, filter, query]);
 
   return (
     <div className="min-h-screen bg-[#050505] pt-20 md:pt-32 px-4 md:px-12 pb-10 relative">
@@ -126,22 +155,22 @@ const SearchPage = ({ onMovieClick, externalQuery = "" }) => {
           {isLoading ? (
             <motion.div 
               key="loader"
-              initial={{ opacity: 0 }}
+              initial={{ opacity: reducedMotion ? 1 : 0 }}
               animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              exit={{ opacity: reducedMotion ? 1 : 0 }}
               className="flex flex-col items-center justify-center py-20"
             >
               <Loader2 className="w-10 h-10 text-red-600 animate-spin" />
             </motion.div>
           ) : filteredResults.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-8">
+            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3 md:gap-6">
               {filteredResults.map((movie) => (
                 <div key={movie.id} className="transform-gpu">
                   <MovieCard movie={movie} onClick={() => onMovieClick(movie)} />
                 </div>
               ))}
             </div>
-          ) : query.length > 2 ? (
+          ) : query.length > 1 ? (
             <div className="text-center py-20 border border-white/5 rounded-3xl bg-white/[0.02]">
               <p className="text-white/40 text-xs font-black uppercase tracking-[0.3em]">No results for "{query}"</p>
             </div>

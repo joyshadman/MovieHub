@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
+import { motion, AnimatePresence, useScroll, useTransform, useReducedMotion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
 import { auth, db } from '../components/firebase'; 
@@ -31,11 +31,15 @@ const Home = () => {
   const [thrillerMovies, setThrillerMovies] = useState([]);
   const [horrorMovies, setHorrorMovies] = useState([]);
   const [bollywood, setBollywood] = useState([]);
+  const [banglaMovies, setBanglaMovies] = useState([]);
+  const [animeSeries, setAnimeSeries] = useState([]);
+  const [animeMovies, setAnimeMovies] = useState([]);
   const [romanceMovies, setRomanceMovies] = useState([]);
   const [history, setHistory] = useState([]); 
 
   const [playingMovie, setPlayingMovie] = useState(null);
   const [loading, setLoading] = useState(true);
+  const reducedMotion = useReducedMotion();
 
   // --- APPLE-STYLE PARALLAX ---
   const { scrollYProgress } = useScroll();
@@ -55,11 +59,16 @@ const Home = () => {
 
   // 1. AUTH & HISTORY SYNC
   useEffect(() => {
+    let unsubscribeHistory = null;
     const unsubscribeAuth = auth.onAuthStateChanged((u) => {
       setUser(u);
+      if (unsubscribeHistory) {
+        unsubscribeHistory();
+        unsubscribeHistory = null;
+      }
       if (u) {
         const historyRef = doc(db, "history", u.uid);
-        const unsubscribeHistory = onSnapshot(historyRef, (docSnap) => {
+        unsubscribeHistory = onSnapshot(historyRef, (docSnap) => {
           if (docSnap.exists()) {
             const historyData = docSnap.data().items || [];
             setHistory([...historyData].sort((a, b) => b.watchedAt - a.watchedAt));
@@ -67,12 +76,14 @@ const Home = () => {
             setHistory([]); 
           }
         });
-        return () => unsubscribeHistory();
       } else { 
         setHistory([]); 
       }
     });
-    return () => unsubscribeAuth();
+    return () => {
+      if (unsubscribeHistory) unsubscribeHistory();
+      unsubscribeAuth();
+    };
   }, []);
 
   // 2. DATA FETCHING
@@ -92,6 +103,9 @@ const Home = () => {
           movieApi.getByGenre(27),            // 8
           movieApi.getBollywood(1),           // 9
           movieApi.getByGenre(10749),         // 10
+          movieApi.getBanglaMovies(1),        // 11
+          movieApi.getAnime('tv', 1),         // 12
+          movieApi.getAnime('movie', 1),      // 13
         ]);
         
         const getVal = (idx) => (results[idx].status === 'fulfilled'
@@ -103,16 +117,15 @@ const Home = () => {
         setTrendingSeries(getVal(1));
         setTopRatedMovies(getVal(2));
         setTopRatedSeries(getVal(3));
-        // Popular TV can be used in a dedicated rail
-        setHistory((prev) => prev); // no-op to keep lints happy if unused
-        const popularSeries = getVal(4);
-
         setActionMovies(getVal(5));
         setComedyMovies(getVal(6));
         setThrillerMovies(getVal(7));
         setHorrorMovies(getVal(8));
         setBollywood(getVal(9));
         setRomanceMovies(getVal(10));
+        setBanglaMovies(getVal(11));
+        setAnimeSeries(getVal(12));
+        setAnimeMovies(getVal(13));
 
         // Optionally: prepend a "Popular Series" rail after trending rows
         // We'll pass it down in the rows mapping below using a local variable.
@@ -140,7 +153,12 @@ const Home = () => {
 
     if (user) {
       const historyRef = doc(db, "history", user.uid);
-      const existingItem = history.find(item => item.id === movie.id);
+      const movieType = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
+      const existingItem = history.find(
+        item =>
+          String(item.id) === String(movie.id) &&
+          (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType
+      );
 
       const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
 
@@ -165,7 +183,11 @@ const Home = () => {
         lastEpisode: existingItem?.lastEpisode || (isTV ? 1 : null)
       };
 
-      const filtered = history.filter(item => item.id !== movie.id);
+      const filtered = history.filter(
+        item =>
+          !(String(item.id) === String(movie.id) &&
+          (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType)
+      );
       const updated = [movieData, ...filtered].slice(0, 20);
       
       await setDoc(historyRef, { items: updated }, { merge: true });
@@ -178,7 +200,7 @@ const Home = () => {
       {/* GLOSSY AMBIENT BACKGROUND */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <motion.div 
-          style={{ scale: bgScale, opacity: bgOpacity }}
+          style={{ scale: reducedMotion ? 1 : bgScale, opacity: reducedMotion ? 0.2 : bgOpacity }}
           className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[180px] rounded-full mix-blend-plus-lighter" 
         />
       </div>
@@ -219,7 +241,7 @@ const Home = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              <motion.div style={{ filter: `blur(${heroBlur}px)` }}>
+              <motion.div style={{ filter: reducedMotion ? 'none' : `blur(${heroBlur}px)` }}>
                 <Hero
                   movies={trendingMovies}
                   onSearchClick={() => setIsSearchOpen(true)}
@@ -229,7 +251,7 @@ const Home = () => {
               </motion.div>
 
               <div className="relative mt-20 z-20 space-y-16 md:space-y-24 pb-40">
-                {history.length > 0 && (
+                {user && (
                   <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
                     <ContinueWatching user={user} onMovieClick={handleMovieSelect} />
                   </motion.div>
@@ -245,6 +267,9 @@ const Home = () => {
                   { title: "Edge of Your Seat", data: thrillerMovies },
                   { title: "Horror Essentials", data: horrorMovies },
                   { title: "Bollywood Specials", data: bollywood },
+                  { title: "Bangla Movies", data: banglaMovies },
+                  { title: "Anime Series", data: animeSeries },
+                  { title: "Anime Movies", data: animeMovies },
                   { title: "Romantic Escapes", data: romanceMovies }
                 ].map((row, i) => (
                   <motion.div key={i} variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>

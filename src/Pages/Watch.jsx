@@ -7,7 +7,7 @@ import {
   LayoutGrid, StretchHorizontal, Monitor, Cpu
 } from 'lucide-react';
 import { Helmet } from "react-helmet";
-import { db } from '../components/firebase';
+import { db, auth } from '../components/firebase';
 import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 
 const WatchPage = ({ movie, user, onClose }) => {
@@ -19,6 +19,16 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [episodesList, setEpisodesList] = useState([]);
   const [layout, setLayout] = useState("row");
   const [shieldActive, setShieldActive] = useState(true);
+  const [currentUser, setCurrentUser] = useState(user || null);
+
+  useEffect(() => {
+    if (user) {
+      setCurrentUser(user);
+      return;
+    }
+    const unsub = auth.onAuthStateChanged((u) => setCurrentUser(u || null));
+    return () => unsub();
+  }, [user]);
 
   const sources = [
     { id: 'vidsrc_cc', name: 'VidSrc CC', icon: <Zap size={14} /> },
@@ -39,9 +49,10 @@ const WatchPage = ({ movie, user, onClose }) => {
 
   // 1. Sync History to Firebase
   const addToHistory = async (s = season, e = episode) => {
-    if (!user) return;
+    const activeUser = currentUser || user || auth.currentUser;
+    if (!activeUser) return;
     try {
-      const historyRef = doc(db, "history", user.uid);
+      const historyRef = doc(db, "history", activeUser.uid);
       const historySnap = await getDoc(historyRef);
       
       const isTV = movie.type === 'tv' || !!movie.first_air_date;
@@ -69,8 +80,11 @@ const WatchPage = ({ movie, user, onClose }) => {
 
       if (historySnap.exists()) {
         const existingData = historySnap.data().items || [];
-        // Filter out the old entry for this movie
-        const updatedItems = existingData.filter(item => item.id !== movie.id);
+        // Filter out the old entry by id+type to avoid movie/tv ID collisions
+        const updatedItems = existingData.filter(item => {
+          const itemType = item.type || (item.first_air_date ? 'tv' : 'movie');
+          return !(String(item.id) === String(movie.id) && itemType === historyItem.type);
+        });
         // Add new entry to the top and limit to 20
         await updateDoc(historyRef, {
           items: [historyItem, ...updatedItems].slice(0, 20)
@@ -89,12 +103,16 @@ const WatchPage = ({ movie, user, onClose }) => {
       const isTV = movie.type === 'tv' || !!movie.first_air_date;
 
       // Auto-resume from Firebase
-      if (user && isTV) {
+      const activeUser = currentUser || user || auth.currentUser;
+      if (activeUser && isTV) {
         try {
-          const historyRef = doc(db, "history", user.uid);
+          const historyRef = doc(db, "history", activeUser.uid);
           const snap = await getDoc(historyRef);
           if (snap.exists()) {
-            const item = snap.data().items?.find(i => i.id === movie.id);
+            const item = snap.data().items?.find(i => {
+              const itemType = i.type || (i.first_air_date ? 'tv' : 'movie');
+              return String(i.id) === String(movie.id) && itemType === 'tv';
+            });
             if (item?.lastSeason) {
               setSeason(item.lastSeason);
               setEpisode(item.lastEpisode || 1);
@@ -112,11 +130,11 @@ const WatchPage = ({ movie, user, onClose }) => {
         } catch (err) { console.error(err); }
       }
       
-      // Initial save
+      // Initial save (also creates history doc for new users)
       addToHistory(season, episode);
     };
     initLoad();
-  }, [movie.id]);
+  }, [movie.id, currentUser]);
 
   // 3. Fetch episodes when season changes
   useEffect(() => {
@@ -140,6 +158,13 @@ const WatchPage = ({ movie, user, onClose }) => {
       addToHistory(season, episode);
     }
   }, [season, episode]);
+
+  // If auth arrives after the player opens, persist current state immediately.
+  useEffect(() => {
+    if (movie.id && currentUser) {
+      addToHistory(season, episode);
+    }
+  }, [currentUser, movie.id]);
 
   const getSourceUrl = () => {
     const isTV = movie.type === 'tv' || !!movie.first_air_date;
