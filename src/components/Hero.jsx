@@ -1,14 +1,13 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { 
   Shield, Zap, Globe, ArrowUpRight, Play, Sparkles, Loader2, 
-  Sword, Ghost, Drama, Film, Heart, Music, Search 
+  Star, Activity, Tv
 } from 'lucide-react';
 import { movieApi } from '../services/movieApi';
 
-// The category source from your Categories component
 const genreList = [
   { id: 'bollywood', name: 'Bollywood' },
   { id: 'bangla', name: 'Bangla' },
@@ -28,217 +27,177 @@ const Hero = ({ onSearchClick }) => {
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState("");
-  const containerRef = useRef(null);
 
   useEffect(() => {
     const fetchHeroData = async () => {
       try {
         setLoading(true);
-        // 1. Pick a completely random genre from the list provided
         const randomGenre = genreList[Math.floor(Math.random() * genreList.length)];
         setActiveCategory(randomGenre.name);
 
         let data;
+        if (randomGenre.id === 'bollywood') data = await movieApi.getBollywood();
+        else if (randomGenre.id === 'bangla') data = await movieApi.getBanglaMovies();
+        else if (randomGenre.id === 'anime') data = await movieApi.getAnime('movie');
+        else data = await movieApi.getByGenre(randomGenre.id, 'movie');
 
-        // 2. Fetch data based on the randomized category
-        if (randomGenre.id === 'bollywood') {
-          data = await movieApi.getBollywood();
-        } else if (randomGenre.id === 'bangla') {
-          data = await movieApi.getBanglaMovies();
-        } else if (randomGenre.id === 'anime') {
-          data = await movieApi.getAnime('movie');
-        } else {
-          data = await movieApi.getByGenre(randomGenre.id, 'movie');
-        }
-
-        // 3. Extract results and take exactly 7 items as requested
-        const results = data?.results || [];
-        setSlides(results.slice(0, 7));
-        setLoading(false);
+        setSlides((data?.results || []).slice(0, 7));
       } catch (error) {
         console.error("Hero Discovery Error:", error);
+      } finally {
         setLoading(false);
       }
     };
-
     fetchHeroData();
   }, []);
 
-  // Auto-slide logic
   useEffect(() => {
     if (slides.length === 0) return;
     const timer = setInterval(() => {
       setIndex((prev) => (prev + 1) % slides.length);
-    }, 6000); 
+    }, 7000); 
     return () => clearInterval(timer);
   }, [slides]);
 
-  const { scrollY } = useScroll();
-  const yParallax = useTransform(scrollY, [0, 500], [0, 250]);
-  const opacityFade = useTransform(scrollY, [0, 400], [1, 0]);
-
-  const current = slides[index];
+  const current = useMemo(() => slides[index], [slides, index]);
 
   if (loading || !current) return (
-    <div className="h-[100svh] w-full flex flex-col items-center justify-center bg-[#020202]">
-      <Loader2 className="w-12 h-12 text-red-600 animate-spin" />
-      <p className="mt-4 text-[10px] font-black uppercase tracking-[0.5em] text-white/20 animate-pulse">
-        Generating Randomized Spotlight
-      </p>
+    <div className="h-[100svh] w-full flex flex-col items-center justify-center bg-[#0a0a0a]">
+      <Loader2 className="w-10 h-10 text-red-600 animate-spin" />
+      <p className="mt-4 text-[9px] font-bold uppercase tracking-[0.6em] text-white/30">INITIALIZING_SPOTLIGHT</p>
     </div>
   );
 
   return (
-    <div ref={containerRef} className="relative h-[100svh] w-full overflow-hidden bg-[#020202]">
+    <div className="relative h-[100svh] w-full overflow-hidden bg-[#080808]">
       
-      {/* CINEMATIC GLASSY OVERLAYS */}
-      <div className="absolute inset-0 z-10 pointer-events-none">
-        <div className="absolute inset-0 opacity-[0.03] mix-blend-overlay" 
-             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
-        
-        {/* Dynamic Vignette */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_50%,transparent_0%,rgba(0,0,0,0.9)_100%)]" />
-        <div className="absolute bottom-0 w-full h-1/2 bg-gradient-to-t from-[#020202] via-[#020202]/80 to-transparent" />
-      </div>
-
-      {/* BACKGROUND IMAGE WITH PARALLAX */}
+      {/* BACKGROUND IMAGE - SOFT MASKING */}
       <AnimatePresence mode="wait">
         <motion.div
           key={current.id}
-          initial={{ opacity: 0, scale: 1.15, filter: 'blur(20px)' }}
-          animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-          exit={{ opacity: 0, scale: 0.95, filter: 'blur(10px)' }}
-          transition={{ duration: 1.8, ease: [0.19, 1, 0.22, 1] }}
-          className="absolute inset-0 z-0"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 1.2 }}
+          className="absolute inset-0"
         >
-          <motion.div 
-            style={{ 
-              y: yParallax,
-              backgroundImage: `url(${current.backdrop})` 
-            }}
-            className="absolute inset-0 bg-cover bg-center filter brightness-[0.4] contrast-[1.2] saturate-[1.2]"
+          <div 
+            style={{ backgroundImage: `url(${current.backdrop})` }}
+            className="absolute inset-0 bg-cover bg-center filter brightness-[0.65] saturate-[1.1]"
           />
+          
+          {/* Refined subtle gradients */}
+          <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-black/20 to-transparent z-10" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-transparent to-transparent z-10" />
         </motion.div>
       </AnimatePresence>
 
       {/* CONTENT LAYER */}
-      <div className="absolute inset-0 z-20 flex flex-col justify-center">
-        <div className="max-w-[1600px] mx-auto w-full px-6 md:px-20">
+      <div className="absolute inset-0 z-20 flex items-center">
+        <div className="container mx-auto px-6 md:px-12 lg:px-20">
           <AnimatePresence mode="wait">
             <motion.div
               key={current.id}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              variants={{
-                hidden: { opacity: 0 },
-                visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
-              }}
-              style={{ opacity: opacityFade }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.6 }}
+              className="max-w-3xl"
             >
-              {/* RANDOMIZED CATEGORY TAG */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0, y: 15 }, visible: { opacity: 1, y: 0 } }}
-                className="flex items-center gap-4 mb-8"
-              >
-                <div className="flex items-center gap-3 px-4 py-1.5 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-full shadow-2xl">
-                  <Sparkles size={14} className="text-red-600 animate-pulse" />
-                  <span className="text-[11px] font-black uppercase tracking-[0.5em] text-white/90">
+              {/* Badge UI */}
+              <div className="flex items-center gap-3 mb-6">
+                <div className="flex items-center gap-2 px-3 py-1 bg-red-600/90 backdrop-blur-md rounded-lg shadow-xl shadow-red-900/20">
+                  <Sparkles size={12} className="text-white animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-white">
                     {activeCategory}
                   </span>
                 </div>
-                <div className="h-[1px] w-12 bg-red-600/30" />
-                <span className="text-red-600 text-[10px] font-black uppercase tracking-[0.4em]">
-                  {Number(current.rating).toFixed(1)} SCORE
-                </span>
-              </motion.div>
+                <div className="flex items-center gap-2 px-3 py-1 bg-white/5 backdrop-blur-xl border border-white/10 rounded-lg">
+                  <Star size={12} className="text-yellow-500 fill-yellow-500" />
+                  <span className="text-[10px] font-black text-white/90">
+                    {Number(current.rating).toFixed(1)}
+                  </span>
+                </div>
+              </div>
 
-              {/* DYNAMIC TITLE SPLIT */}
-              <motion.div variants={{ hidden: { opacity: 0, x: -30 }, visible: { opacity: 1, x: 0 } }}>
-                <h1 className="text-6xl md:text-[8rem] lg:text-[11rem] font-black uppercase leading-[0.8] tracking-tighter text-white drop-shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
-                    <span className="block">{current.title.split(' ')[0]}</span>
-                    {current.title.includes(' ') && (
-                      <span className="block font-thin italic opacity-90 text-red-600 mix-blend-screen">
-                        {current.title.split(' ').slice(1).join(' ')}
-                      </span>
-                    )}
-                </h1>
-              </motion.div>
+              {/* FLUID TYPOGRAPHY - Balanced for all screens */}
+              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black uppercase leading-[1.1] tracking-tighter text-white drop-shadow-2xl">
+                {current.title.split(' ')[0]}
+                {current.title.includes(' ') && (
+                  <span 
+                    className="block opacity-90"
+                    style={{ 
+                      WebkitTextStroke: "1px rgba(255,255,255,0.5)", 
+                      color: "transparent",
+                      transition: "all 0.5s ease" 
+                    }}
+                  >
+                    {current.title.split(' ').slice(1).join(' ')}
+                  </span>
+                )}
+              </h1>
 
-              {/* META INFO */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0 }, visible: { opacity: 1 } }}
-                className="flex items-center gap-6 mt-10 mb-10 text-white/50 font-bold uppercase tracking-[0.3em] text-[10px]"
-              >
-                <span className="text-white">{current.year}</span>
-                <div className="w-1.5 h-1.5 bg-red-600 rotate-45" />
-                <span>{current.type === 'movie' ? 'Cinematic Feature' : 'Television Series'}</span>
-                <div className="w-1.5 h-1.5 bg-red-600 rotate-45" />
-                <span className="bg-red-600/10 text-red-500 px-3 py-1 rounded-sm border border-red-600/20">4K_ULTRA_HD</span>
-              </motion.div>
+              {/* Meta Info Line */}
+              <div className="flex items-center gap-4 mt-6 mb-8 text-[11px] font-bold tracking-[0.2em] text-white/50 uppercase">
+                 <span className="flex items-center gap-2 bg-white/5 px-2 py-1 rounded border border-white/10 text-white">
+                    <Tv size={13} /> {current.year}
+                 </span>
+                 <div className="w-1 h-1 bg-red-600 rounded-full" />
+                 <span className="text-red-500">Ultra 4K Stream</span>
+              </div>
 
-              {/* ACTION BUTTONS */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0, y: 30 }, visible: { opacity: 1, y: 0 } }}
-                className="flex flex-wrap items-center gap-5"
-              >
+              {/* Description - Shorter & cleaner */}
+              <p className="hidden md:block text-sm md:text-base text-white/60 max-w-lg mb-10 line-clamp-2 leading-relaxed font-medium">
+                {current.overview || "Now streaming the most anticipated release of the season. Experience cinematic brilliance in high definition."}
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-4">
                 <Link to={`/details/${current.type}/${current.id}`}>
                   <motion.button 
-                    whileHover={{ scale: 1.05, backgroundColor: "#fff", color: "#000", boxShadow: "0 0 50px rgba(255,255,255,0.3)" }}
+                    whileHover={{ scale: 1.05, backgroundColor: "#fff", color: "#000" }}
                     whileTap={{ scale: 0.95 }}
-                    className="flex items-center gap-5 bg-red-600 text-white px-14 py-7 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_15px_40px_rgba(220,38,38,0.3)] transition-all duration-700"
+                    className="flex items-center gap-3 bg-red-600 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all duration-300"
                   >
-                    <Play size={18} fill="currentColor" /> Play Production
+                    <Play size={16} fill="currentColor" /> Play Production
                   </motion.button>
                 </Link>
                 
                 <motion.button 
                   onClick={onSearchClick}
-                  whileHover={{ backgroundColor: "rgba(255,255,255,0.1)", borderColor: "rgba(255,255,255,0.5)" }}
-                  className="flex items-center gap-5 bg-transparent border border-white/10 text-white px-12 py-7 rounded-full font-black uppercase tracking-widest text-xs backdrop-blur-md transition-all duration-500"
+                  whileHover={{ backgroundColor: "rgba(255,255,255,0.15)" }}
+                  className="flex items-center gap-3 bg-white/5 border border-white/10 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-[10px] backdrop-blur-xl transition-all"
                 >
-                  Explore Catalog <ArrowUpRight size={18} />
+                  Discovery <ArrowUpRight size={16} />
                 </motion.button>
-              </motion.div>
+              </div>
             </motion.div>
           </AnimatePresence>
         </div>
       </div>
 
-      {/* 7-SLIDE PROGRESS INDICATORS */}
-      <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-40 flex gap-3">
+      {/* REFINED INDICATORS */}
+      <div className="absolute bottom-10 left-6 md:left-12 lg:left-20 z-40 flex gap-2">
         {slides.map((_, i) => (
-          <div 
+          <button 
             key={i} 
             onClick={() => setIndex(i)}
-            className="relative h-[3px] w-14 bg-white/5 cursor-pointer overflow-hidden rounded-full"
-          >
-            {index === i && (
-              <motion.div 
-                initial={{ x: "-100%" }}
-                animate={{ x: "0%" }}
-                transition={{ duration: 6, ease: "linear" }}
-                className="absolute inset-0 bg-red-600 shadow-[0_0_15px_#dc2626]"
-              />
-            )}
-          </div>
+            className={`h-1 rounded-full transition-all duration-700 ${index === i ? 'w-10 bg-red-600' : 'w-4 bg-white/10 hover:bg-white/30'}`}
+          />
         ))}
       </div>
 
-      {/* GLASSY DECORATIVE STATS */}
-      <div className="absolute bottom-12 left-20 z-40 hidden xl:flex gap-16 opacity-30">
-        <StatItem icon={<Shield size={14} className="text-red-600"/>} text="ENCRYPTED_STREAM" />
-        <StatItem icon={<Zap size={14} className="text-red-600"/>} text="LOW_LATENCY_VOD" />
-        <StatItem icon={<Globe size={14} className="text-red-600"/>} text="MULTI_REGION_CDN" />
+      {/* MINIMAL STATS */}
+      <div className="absolute bottom-10 right-12 z-40 hidden lg:flex items-center gap-8 opacity-30">
+        <div className="flex items-center gap-2 text-[8px] font-black tracking-widest text-white uppercase">
+          <Shield size={10} /> Encryption: AES-256
+        </div>
+        <div className="flex items-center gap-2 text-[8px] font-black tracking-widest text-white uppercase">
+          <Zap size={10} /> Buffer: 0.2s
+        </div>
       </div>
     </div>
   );
 };
-
-const StatItem = ({ icon, text }) => (
-  <div className="flex items-center gap-3 text-[10px] font-black tracking-[0.4em] text-white uppercase italic">
-    {icon} {text}
-  </div>
-);
 
 export default Hero;

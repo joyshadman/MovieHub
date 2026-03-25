@@ -52,7 +52,7 @@ const AppContent = ({ user }) => {
       <ScrollToTop />
       <Navbar user={user} onMovieClick={handleMovieClick} />
       
-      <main className="pt-20">
+      <main className="">
         <Routes>
           {/* Main Pages */}
           <Route path="/" element={<Home user={user} onMovieClick={handleMovieClick} />} />
