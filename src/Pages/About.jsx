@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 
 const About = () => {
+  const ADMIN_EMAILS = ["joyshadman@gmail.com", "joyshadman@gmail.om"];
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [siteUsers, setSiteUsers] = useState([]); 
@@ -47,7 +48,7 @@ const About = () => {
 
   // 2. FETCH DATA (Updates & Personnel)
   useEffect(() => {
-    if (user && user.email === "joyshadman@gmail.com") setIsAdmin(true);
+    if (user && ADMIN_EMAILS.includes(user.email)) setIsAdmin(true);
 
     fetch('https://api.github.com/users/joyshadman')
       .then(res => res.json())
@@ -60,7 +61,7 @@ const About = () => {
     });
 
     let unsubUsers = () => {};
-    if (user?.email === "joyshadman@gmail.com") {
+    if (user?.email && ADMIN_EMAILS.includes(user.email)) {
       const qUsers = query(collection(db, "users"), orderBy("lastActive", "desc"));
       unsubUsers = onSnapshot(qUsers, (snapshot) => {
         setSiteUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));

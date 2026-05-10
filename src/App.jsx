@@ -1,8 +1,9 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { auth } from './components/firebase';
+import { auth, db } from './components/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Toaster } from 'react-hot-toast';
 
 // Pages
@@ -27,6 +28,25 @@ const ScrollToTop = () => {
 
 const AppContent = ({ user }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!user) return;
+
+    setDoc(
+      doc(db, "users", user.uid),
+      {
+        displayName: user.displayName || "Anonymous",
+        email: user.email || null,
+        photoURL: user.photoURL || null,
+        isOnline: true,
+        currentPage: location.pathname,
+        watching: `Browsing ${location.pathname}`,
+        lastActive: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((err) => console.error("Page tracking error:", err));
+  }, [user, location.pathname]);
 
   // CENTRAL NAVIGATION LOGIC
   // This handles clicks from Hero, Search, or Grid items

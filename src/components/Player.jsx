@@ -9,7 +9,7 @@ import { db } from '../components/firebase';
 import { doc, setDoc, arrayUnion } from 'firebase/firestore';
 
 const Player = ({ movie, user, onClose }) => {
-  const [server, setServer] = useState(null); // Set to null to allow useEffect to force vidsrc.cc
+  const [server, setServer] = useState(null); // Set to null to allow useEffect to force vidsrc.pro
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -21,7 +21,7 @@ const Player = ({ movie, user, onClose }) => {
   const tmdbId = movie.id;
   const isTV = movie.type === 'tv' || !!movie.first_air_date;
 
-  // 1. DYNAMIC PROVIDER ENGINE - Prioritizing Vidsrc.cc
+  // 1. DYNAMIC PROVIDER ENGINE - Prioritizing Vidsrc.pro
   const providers = [
     { id: 3, name: "Vidsrc.cc", url: isTV ? `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${season}/${episode}` : `https://vidsrc.cc/v2/embed/movie/${tmdbId}` },
     { id: 1, name: "VidSrc PRO", url: isTV ? `https://vidsrc.pro/embed/tv/${tmdbId}/${season}/${episode}` : `https://vidsrc.pro/embed/movie/${tmdbId}` },
@@ -29,9 +29,9 @@ const Player = ({ movie, user, onClose }) => {
     { id: 4, name: "AutoEmbed", url: isTV ? `https://player.autoembed.cc/tv/${tmdbId}/${season}/${episode}` : `https://player.autoembed.cc/movie/${tmdbId}` },
   ];
 
-  // Force vidsrc.cc (ID: 3) as default on mount
+  // Force vidsrc.pro (ID: 1) as default on mount
   useEffect(() => {
-    if (!server) setServer(3);
+    if (!server) setServer(1);
   }, [server]);
 
   const currentProvider = providers.find(p => p.id === server) || providers[0];
@@ -151,7 +151,6 @@ const Player = ({ movie, user, onClose }) => {
             className="w-full h-full border-none"
             allowFullScreen
             onLoad={() => setLoading(false)}
-            sandbox="allow-forms allow-pointer-lock allow-same-origin allow-scripts allow-top-navigation"
           />
 
           {hasError && !loading && (

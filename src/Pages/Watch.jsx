@@ -10,10 +10,10 @@ import {
 } from 'lucide-react';
 import { Helmet } from "react-helmet";
 import { db, auth } from '../components/firebase';
-import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 const WatchPage = ({ movie, user, onClose }) => {
-  const [activeSource, setActiveSource] = useState('vidsrc_cc');
+  const [activeSource, setActiveSource] = useState('vidsrc_pro');
   const [isLoading, setIsLoading] = useState(true);
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
@@ -39,12 +39,10 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, [user]);
 
   const sources = [
-    { id: 'vidsrc_cc', name: 'VidSrc CC', icon: <Zap size={14} /> },
     { id: 'vidsrc_pro', name: 'VidSrc Pro', icon: <Server size={14} /> },
+    { id: 'vidsrc_cc', name: 'VidSrc CC', icon: <Zap size={14} /> },
     { id: 'vidlink', name: 'VidLink', icon: <Globe size={14} /> },
-    { id: 'embed_su', name: 'Embed.su', icon: <ShieldCheck size={14} /> },
     { id: 'vidsrc_xyz', name: 'VidSrc XYZ', icon: <Cpu size={14} /> },
-    { id: 'autoembed', name: 'AutoEmbed', icon: <Monitor size={14} /> }
   ];
 
   const getOptions = () => ({
@@ -140,6 +138,31 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, [movie.id, season]);
 
   useEffect(() => { if (movie.id) addToHistory(season, episode); }, [season, episode]);
+
+  useEffect(() => {
+    const activeUser = currentUser || user || auth.currentUser;
+    if (!activeUser || !movie?.id) return;
+
+    const isTV = movie.type === 'tv' || !!movie.first_air_date;
+    const sourceLabel = sources.find((s) => s.id === activeSource)?.name || activeSource;
+    const watchLabel = isTV
+      ? `Watching ${movie.title || movie.name} S${season}E${episode} (${sourceLabel})`
+      : `Watching ${movie.title || movie.name} (${sourceLabel})`;
+
+    setDoc(
+      doc(db, "users", activeUser.uid),
+      {
+        displayName: activeUser.displayName || "Anonymous",
+        email: activeUser.email || null,
+        photoURL: activeUser.photoURL || null,
+        isOnline: true,
+        watching: watchLabel,
+        currentPage: window.location.pathname,
+        lastActive: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((err) => console.error("Activity update error:", err));
+  }, [activeSource, season, episode, movie?.id, currentUser, user]);
 
   const getSourceUrl = () => {
     const isTV = movie.type === 'tv' || !!movie.first_air_date;
@@ -272,10 +295,6 @@ const WatchPage = ({ movie, user, onClose }) => {
               className="w-full h-full"
               allowFullScreen
               onLoad={() => setIsLoading(false)}
-              sandbox={activeSource === 'vidsrc_cc' 
-                ? "allow-forms allow-pointer-lock allow-same-origin allow-scripts allow-top-navigation-by-user-activation allow-presentation" 
-                : undefined
-              }
             />
 
             {/* FLOATING LIGHT SWITCH (Visible only in cinema mode) */}
