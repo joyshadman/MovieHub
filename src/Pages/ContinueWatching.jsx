@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { History, Trash2, Play, AlertTriangle, X } from 'lucide-react';
+import { Trash2, Play, AlertTriangle, X } from 'lucide-react';
 import { db } from '../components/firebase';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
@@ -218,16 +218,6 @@ const ContinueWatching = ({ user, onMovieClick }) => {
                     >
                       <X size={16} className="text-white/40 group-hover/btn:text-white" />
                     </button>
-                  </div>
-
-                  {/* Progress Bar */}
-                  <div className="mt-4 relative h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${movie.progress || 60}%` }}
-                      transition={{ duration: 1.5, ease: "circOut" }}
-                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_15px_rgba(220,38,38,0.5)] rounded-full"
-                    />
                   </div>
                 </div>
               </div>

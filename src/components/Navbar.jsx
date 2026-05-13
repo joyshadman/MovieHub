@@ -16,7 +16,7 @@ const Navbar = () => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [historyCount, setHistoryCount] = useState(0);
+  const [libraryCount, setLibraryCount] = useState(0);
   
   const navigate = useNavigate();
   const dropdownRef = useRef(null);
@@ -33,13 +33,20 @@ const Navbar = () => {
 
     window.addEventListener('scroll', handleScroll);
     
+    let unsubWatchlist = () => {};
+
     const unsubscribe = auth.onAuthStateChanged((u) => {
+      unsubWatchlist();
+      unsubWatchlist = () => {};
+      setLibraryCount(0);
       setUser(u);
+
       if (u) {
         setShowAuthModal(false);
-        const historyRef = doc(db, "history", u.uid);
-        onSnapshot(historyRef, (docSnap) => {
-          if (docSnap.exists()) setHistoryCount(docSnap.data().items?.length || 0);
+        const watchlistRef = doc(db, "watchlists", u.uid);
+        unsubWatchlist = onSnapshot(watchlistRef, (docSnap) => {
+          if (docSnap.exists()) setLibraryCount(docSnap.data().items?.length || 0);
+          else setLibraryCount(0);
         });
       }
     });
@@ -54,6 +61,7 @@ const Navbar = () => {
     return () => {
       window.removeEventListener('scroll', handleScroll);
       document.removeEventListener('mousedown', handleClickOutside);
+      unsubWatchlist();
       unsubscribe();
     };
   }, []);
@@ -173,7 +181,7 @@ const Navbar = () => {
                         </div>
                         <Link to="/mylist" onClick={() => setShowDropdown(false)} className="flex items-center justify-between w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/10 transition-all">
                           <span className="flex items-center gap-3"><Bookmark size={16} className="text-red-600" /> My Library</span>
-                          {historyCount > 0 && <span className="bg-red-600 text-white text-[8px] px-2 py-0.5 rounded-full">{historyCount}</span>}
+                          {libraryCount > 0 && <span className="bg-red-600 text-white text-[8px] px-2 py-0.5 rounded-full">{libraryCount}</span>}
                         </Link>
                         <button onClick={handleSignOut} className="flex items-center gap-3 w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 transition-all">
                           <LogOut size={16} /> Disconnect
@@ -239,7 +247,7 @@ const Navbar = () => {
                 {user && (
                   <Link to="/mylist" onClick={() => setShowMobileMenu(false)} className="flex items-center justify-between p-5 text-[11px] font-black uppercase tracking-[0.3em] text-red-500 hover:bg-red-500/5 rounded-2xl transition-all">
                     <span className="flex items-center gap-4"><Bookmark size={16}/> My Library</span>
-                    <span className="bg-red-600 text-white text-[9px] px-2 py-0.5 rounded-lg">{historyCount}</span>
+                    {libraryCount > 0 && <span className="bg-red-600 text-white text-[9px] px-2 py-0.5 rounded-lg">{libraryCount}</span>}
                   </Link>
                 )}
               </div>
