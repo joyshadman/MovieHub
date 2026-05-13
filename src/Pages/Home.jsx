@@ -14,6 +14,7 @@ import Watch from './Watch';
 import SearchPage from './Search';
 import MyList from './MyList';
 import ContinueWatching from './ContinueWatching';
+import DeviceModal from '../components/DeviceModal'; 
 
 const Home = () => {
   const navigate = useNavigate();
@@ -126,9 +127,6 @@ const Home = () => {
         setBanglaMovies(getVal(11));
         setAnimeSeries(getVal(12));
         setAnimeMovies(getVal(13));
-
-        // Optionally: prepend a "Popular Series" rail after trending rows
-        // We'll pass it down in the rows mapping below using a local variable.
         
       } catch (err) { 
         console.error("Home Data Fetch Error:", err); 
@@ -168,7 +166,6 @@ const Home = () => {
         id: movie.id,
         type: isTV ? 'tv' : 'movie',
         title: movie.title || movie.name,
-        // Derive TMDB-style paths from full URLs when needed
         poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500') 
           ? movie.image.replace('https://image.tmdb.org/t/p/w500', '') 
           : movie.poster_path),
@@ -197,6 +194,9 @@ const Home = () => {
   return (
     <div className="min-h-screen bg-[#020202] text-white selection:bg-red-600 font-sans overflow-x-hidden flex flex-col">
       
+      {/* Global First Time Visited / Sign up device check modal */}
+      <DeviceModal />
+
       {/* GLOSSY AMBIENT BACKGROUND */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <motion.div 
@@ -204,7 +204,6 @@ const Home = () => {
           className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[180px] rounded-full mix-blend-plus-lighter" 
         />
       </div>
-
 
       <main className="relative z-10 flex-grow">
         <AnimatePresence mode="wait">

@@ -1,32 +1,32 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform, useMotionValue, useSpring } from 'framer-motion';
-import { 
-  Github, Cpu, Rocket, Database, 
+import {
+  Github, Cpu, Rocket, Database,
   Terminal, Sparkles, Globe, ArrowUpRight,
   Code2, Layers, Zap, Smartphone, ChevronRight,
   Plus, Trash2, Edit3, Save, X, Activity, Clock, ShieldCheck, Users, Eye, Power,
   Monitor, HardDrive, Box, GitBranch
 } from 'lucide-react';
-import { auth, db } from '../components/firebase'; 
-import { 
-  collection, addDoc, onSnapshot, query, orderBy, 
-  deleteDoc, doc, updateDoc, serverTimestamp, setDoc 
+import { auth, db } from '../components/firebase';
+import {
+  collection, addDoc, onSnapshot, query, orderBy,
+  deleteDoc, doc, updateDoc, serverTimestamp, setDoc
 } from 'firebase/firestore';
 
 const About = () => {
-  const ADMIN_EMAILS = ["joyshadman@gmail.com", "joyshadman@gmail.om"];
-  const [avatarUrl, setAvatarUrl] = useState(null);
+  const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || "")
+    .split(",")
+    .map(email => email.trim()); const [avatarUrl, setAvatarUrl] = useState(null);
   const [updates, setUpdates] = useState([]);
-  const [siteUsers, setSiteUsers] = useState([]); 
+  const [siteUsers, setSiteUsers] = useState([]);
   const [newUpdate, setNewUpdate] = useState("");
   const [newVersion, setNewVersion] = useState("v1.0");
   const [isAdmin, setIsAdmin] = useState(false);
-  
+
   const { scrollYProgress } = useScroll();
   const user = auth.currentUser;
 
-  // 1. TRACK CURRENT USER STATUS & ACTIVITY
   useEffect(() => {
     if (!user) return;
 
@@ -38,7 +38,7 @@ const About = () => {
         photoURL: user.photoURL,
         lastActive: serverTimestamp(),
         isOnline: online,
-        watching: "Portfolio Core / About" 
+        watching: "Portfolio Core / About"
       }, { merge: true });
     };
 
@@ -60,7 +60,7 @@ const About = () => {
       setUpdates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    let unsubUsers = () => {};
+    let unsubUsers = () => { };
     if (user?.email && ADMIN_EMAILS.includes(user.email)) {
       const qUsers = query(collection(db, "users"), orderBy("lastActive", "desc"));
       unsubUsers = onSnapshot(qUsers, (snapshot) => {
@@ -106,15 +106,15 @@ const About = () => {
   };
 
   const skills = [
-    { name: "Frontend Architecture", icon: <Monitor size={20}/>, tools: "React, Next.js, Tailwind, Framer" },
-    { name: "Backend Infrastructure", icon: <HardDrive size={20}/>, tools: "Node.js, Express, Firebase, MongoDB" },
-    { name: "System Optimization", icon: <Cpu size={20}/>, tools: "Linux, Kernel Tuning, Btrfs, Shell" },
-    { name: "DevOps & Flow", icon: <GitBranch size={20}/>, tools: "Vercel, Git, Docker, Ollama AI" }
+    { name: "Frontend Architecture", icon: <Monitor size={20} />, tools: "React, Next.js, Tailwind, Framer" },
+    { name: "Backend Infrastructure", icon: <HardDrive size={20} />, tools: "Node.js, Express, Firebase, MongoDB" },
+    { name: "System Optimization", icon: <Cpu size={20} />, tools: "Linux, Kernel Tuning, Btrfs, Shell" },
+    { name: "DevOps & Flow", icon: <GitBranch size={20} />, tools: "Vercel, Git, Docker, Ollama AI" }
   ];
 
   return (
     <div className="relative min-h-screen bg-[#020202] text-white selection:bg-red-600/40 overflow-x-hidden pt-20 pb-20 font-sans">
-      
+
       {/* BACKGROUND ELEMENTS */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-red-600/5 rounded-full blur-[120px]" />
@@ -123,7 +123,7 @@ const About = () => {
       </div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-6">
-        
+
         {/* HERO SECTION */}
         <motion.section style={{ y: yHero }} className="text-center mb-32">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="inline-flex items-center gap-3 px-6 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-2xl mb-8">
@@ -137,19 +137,19 @@ const About = () => {
         </motion.section>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-10 pb-20">
-          
+
           {/* PROFILE ARCHITECTURE */}
-          <motion.div 
+          <motion.div
             onMouseMove={handleMouseMove}
             onMouseLeave={() => { rotateX.set(0); rotateY.set(0); }}
             className="md:col-span-12 lg:col-span-7 group bg-white/[0.02] border border-white/5 rounded-[4rem] p-12 md:p-20 relative overflow-hidden backdrop-blur-3xl"
           >
             <div className="relative z-10 flex flex-col md:flex-row items-center gap-16">
-              <motion.div 
-                style={{ 
-                  rotateX: useTransform(rotateX, [-0.5, 0.5], [10, -10]), 
-                  rotateY: useTransform(rotateY, [-0.5, 0.5], [-10, 10]) 
-                }} 
+              <motion.div
+                style={{
+                  rotateX: useTransform(rotateX, [-0.5, 0.5], [10, -10]),
+                  rotateY: useTransform(rotateY, [-0.5, 0.5], [-10, 10])
+                }}
                 className="relative shrink-0"
               >
                 <div className="absolute inset-0 bg-red-600/20 blur-3xl scale-125 rounded-full" />
@@ -163,15 +163,15 @@ const About = () => {
                   Engineering with <span className="text-red-600">Zero Compromise.</span>
                 </h2>
                 <div className="space-y-4">
-                   <p className="text-white/60 text-sm leading-loose font-medium">
-                     I am a Full-Stack Developer specializing in the MERN stack and high-performance Linux environments. 
-                     I build digital ecosystems where performance meets aesthetic brutality—prioritizing glassy transparency and low-latency interactions.
-                   </p>
-                   <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-                      {['MERN Stack', 'Next.js', 'Framer Motion', 'Linux Poweruser'].map(tag => (
-                        <span key={tag} className="text-[9px] px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/40 uppercase font-black">{tag}</span>
-                      ))}
-                   </div>
+                  <p className="text-white/60 text-sm leading-loose font-medium">
+                    I am a Full-Stack Developer specializing in the MERN stack and high-performance Linux environments.
+                    I build digital ecosystems where performance meets aesthetic brutality—prioritizing glassy transparency and low-latency interactions.
+                  </p>
+                  <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+                    {['MERN Stack', 'Next.js', 'Framer Motion', 'Linux Poweruser'].map(tag => (
+                      <span key={tag} className="text-[9px] px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/40 uppercase font-black">{tag}</span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -180,11 +180,11 @@ const About = () => {
           {/* SYSTEM LOGS */}
           <motion.div className="md:col-span-12 lg:col-span-5 bg-zinc-900/40 border border-white/10 rounded-[4rem] flex flex-col backdrop-blur-3xl overflow-hidden shadow-2xl">
             <div className="p-10 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-               <div>
-                 <h3 className="text-[11px] font-black uppercase tracking-[0.5em]">System_Logs</h3>
-                 <p className="text-[9px] text-red-600 font-bold uppercase mt-1">Version History</p>
-               </div>
-               <Activity className="text-red-600 animate-pulse" size={20} />
+              <div>
+                <h3 className="text-[11px] font-black uppercase tracking-[0.5em]">System_Logs</h3>
+                <p className="text-[9px] text-red-600 font-bold uppercase mt-1">Version History</p>
+              </div>
+              <Activity className="text-red-600 animate-pulse" size={20} />
             </div>
 
             {isAdmin && (
@@ -215,15 +215,15 @@ const About = () => {
         <section className="mb-40">
           <div className="flex flex-col md:flex-row justify-between items-end gap-6 mb-16">
             <div className="space-y-4">
-               <h3 className="text-red-600 text-[10px] font-black uppercase tracking-[0.6em]">Capabilities</h3>
-               <h2 className="text-6xl font-black italic uppercase tracking-tighter">The <span className="text-red-600">Arsenal.</span></h2>
+              <h3 className="text-red-600 text-[10px] font-black uppercase tracking-[0.6em]">Capabilities</h3>
+              <h2 className="text-6xl font-black italic uppercase tracking-tighter">The <span className="text-red-600">Arsenal.</span></h2>
             </div>
             <p className="max-w-md text-white/40 text-xs font-bold uppercase tracking-widest leading-relaxed">Technical stack optimized for rapid deployment and high-fidelity visuals.</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {skills.map((skill, index) => (
-              <motion.div 
+              <motion.div
                 key={index}
                 whileHover={{ y: -10 }}
                 className="bg-white/[0.02] border border-white/5 p-10 rounded-[3rem] hover:bg-red-600/5 transition-all group"
@@ -240,7 +240,7 @@ const About = () => {
 
         {/* --- ADMIN: COMMAND CENTER --- */}
         {isAdmin && (
-          <motion.section 
+          <motion.section
             initial={{ opacity: 0, y: 50 }}
             whileInView={{ opacity: 1, y: 0 }}
             className="mb-40 bg-white/[0.02] border border-white/5 rounded-[4rem] overflow-hidden backdrop-blur-3xl shadow-[0_0_50px_rgba(220,38,38,0.05)]"
@@ -260,7 +260,7 @@ const About = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 p-10 gap-6">
               <AnimatePresence>
                 {siteUsers.map((u) => (
-                  <motion.div 
+                  <motion.div
                     key={u.id}
                     layout
                     initial={{ opacity: 0, scale: 0.9 }}
@@ -291,12 +291,12 @@ const About = () => {
                           <Clock size={12} className="text-red-600" /> Pulse
                         </div>
                         <span className="text-[9px] font-bold text-white/60">
-                           {u.lastActive?.toDate ? u.lastActive.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "Syncing..."}
+                          {u.lastActive?.toDate ? u.lastActive.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Syncing..."}
                         </span>
                       </div>
                     </div>
 
-                    <button 
+                    <button
                       onClick={() => handleDeleteUser(u.id)}
                       className="w-full mt-6 py-4 bg-white/5 hover:bg-red-600/10 border border-white/5 hover:border-red-600/40 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all text-white/20 hover:text-red-600 flex items-center justify-center gap-2"
                     >
