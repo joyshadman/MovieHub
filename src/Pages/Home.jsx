@@ -1,6 +1,5 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence, useScroll, useTransform, useReducedMotion } from 'framer-motion';
+import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
 import { auth, db } from '../components/firebase'; 
@@ -42,21 +41,19 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const reducedMotion = useReducedMotion();
 
-  // --- APPLE-STYLE PARALLAX ---
-  const { scrollYProgress } = useScroll();
-  const bgScale = useTransform(scrollYProgress, [0, 1], [1, 1.2]);
-  const bgOpacity = useTransform(scrollYProgress, [0, 0.5], [0.15, 0.4]);
-  const heroBlur = useTransform(scrollYProgress, [0, 0.2], [0, 8]);
-
-  const rowReveal = {
-    hidden: { opacity: 0, y: 40, filter: "blur(10px)" },
-    visible: { 
-      opacity: 1, 
-      y: 0, 
-      filter: "blur(0px)",
-      transition: { duration: 0.8, ease: [0.25, 0.1, 0.25, 1] } 
-    }
-  };
+  const rowReveal = reducedMotion
+    ? {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1, transition: { duration: 0.2 } },
+      }
+    : {
+        hidden: { opacity: 0, y: 16 },
+        visible: {
+          opacity: 1,
+          y: 0,
+          transition: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] },
+        },
+      };
 
   // 1. AUTH & HISTORY SYNC
   useEffect(() => {
@@ -87,54 +84,67 @@ const Home = () => {
     };
   }, []);
 
-  // 2. DATA FETCHING
+  // 2. DATA FETCHING — show hero after trending loads; fill rows in the background
   useEffect(() => {
-    const fetchContent = async () => {
+    let cancelled = false;
+
+    const extractResults = (settled, idx) => {
+      const r = settled[idx];
+      if (!r || r.status !== 'fulfilled') return [];
+      const v = r.value;
+      return Array.isArray(v) ? v : v?.results || [];
+    };
+
+    const loadSecondary = () => {
+      Promise.allSettled([
+        movieApi.getTopRated('movie'),
+        movieApi.getTopRated('tv'),
+        movieApi.getByGenre(28),
+        movieApi.getByGenre(35),
+        movieApi.getByGenre(53),
+        movieApi.getByGenre(27),
+        movieApi.getBollywood(1),
+        movieApi.getByGenre(10749),
+        movieApi.getBanglaMovies(1),
+        movieApi.getAnime('tv', 1),
+        movieApi.getAnime('movie', 1),
+      ]).then((results) => {
+        if (cancelled) return;
+        setTopRatedMovies(extractResults(results, 0));
+        setTopRatedSeries(extractResults(results, 1));
+        setActionMovies(extractResults(results, 2));
+        setComedyMovies(extractResults(results, 3));
+        setThrillerMovies(extractResults(results, 4));
+        setHorrorMovies(extractResults(results, 5));
+        setBollywood(extractResults(results, 6));
+        setRomanceMovies(extractResults(results, 7));
+        setBanglaMovies(extractResults(results, 8));
+        setAnimeSeries(extractResults(results, 9));
+        setAnimeMovies(extractResults(results, 10));
+      });
+    };
+
+    (async () => {
       setLoading(true);
       try {
-        const results = await Promise.allSettled([
-          movieApi.getTrending('movie'),      // 0
-          movieApi.getTrending('tv'),         // 1
-          movieApi.getTopRated('movie'),      // 2
-          movieApi.getTopRated('tv'),         // 3
-          movieApi.getPopular('tv'),          // 4
-          movieApi.getByGenre(28),            // 5
-          movieApi.getByGenre(35),            // 6
-          movieApi.getByGenre(53),            // 7
-          movieApi.getByGenre(27),            // 8
-          movieApi.getBollywood(1),           // 9
-          movieApi.getByGenre(10749),         // 10
-          movieApi.getBanglaMovies(1),        // 11
-          movieApi.getAnime('tv', 1),         // 12
-          movieApi.getAnime('movie', 1),      // 13
+        const [tM, tS] = await Promise.all([
+          movieApi.getTrending('movie'),
+          movieApi.getTrending('tv'),
         ]);
-        
-        const getVal = (idx) => (results[idx].status === 'fulfilled'
-          ? (Array.isArray(results[idx].value) ? results[idx].value : results[idx].value.results || [])
-          : []
-        );
-
-        setTrendingMovies(getVal(0));
-        setTrendingSeries(getVal(1));
-        setTopRatedMovies(getVal(2));
-        setTopRatedSeries(getVal(3));
-        setActionMovies(getVal(5));
-        setComedyMovies(getVal(6));
-        setThrillerMovies(getVal(7));
-        setHorrorMovies(getVal(8));
-        setBollywood(getVal(9));
-        setRomanceMovies(getVal(10));
-        setBanglaMovies(getVal(11));
-        setAnimeSeries(getVal(12));
-        setAnimeMovies(getVal(13));
-        
-      } catch (err) { 
-        console.error("Home Data Fetch Error:", err); 
-      } finally { 
-        setTimeout(() => setLoading(false), 1200); 
+        if (cancelled) return;
+        setTrendingMovies(Array.isArray(tM) ? tM : []);
+        setTrendingSeries(Array.isArray(tS) ? tS : []);
+      } catch (err) {
+        console.error('Home Data Fetch Error:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+      loadSecondary();
+    })();
+
+    return () => {
+      cancelled = true;
     };
-    fetchContent();
   }, []);
 
   // 3. HANDLERS
@@ -199,61 +209,55 @@ const Home = () => {
 
       {/* GLOSSY AMBIENT BACKGROUND */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        <motion.div 
-          style={{ scale: reducedMotion ? 1 : bgScale, opacity: reducedMotion ? 0.2 : bgOpacity }}
-          className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[180px] rounded-full mix-blend-plus-lighter" 
-        />
+        <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[100px] md:blur-[120px] rounded-full mix-blend-plus-lighter opacity-[0.18]" />
       </div>
 
       <main className="relative z-10 flex-grow">
         <AnimatePresence mode="wait">
           {loading ? (
-            <motion.div 
+            <Motion.div 
               key="loader"
               initial={{ opacity: 1 }}
-              exit={{ opacity: 0, scale: 1.05, filter: "blur(20px)" }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
               className="h-screen flex flex-col items-center justify-center bg-[#020202] fixed inset-0 z-[200]"
             >
-               <motion.div 
-                 animate={{ rotate: 360 }} 
-                 transition={{ repeat: Infinity, duration: 1, ease: "linear" }} 
-                 className="w-16 h-16 border-t-2 border-red-600 rounded-full" 
-               />
+               <div className="w-12 h-12 border-2 border-white/10 border-t-red-600 rounded-full animate-spin" />
                <span className="mt-8 text-[8px] font-black uppercase tracking-[1.5em] text-white/30">Syncing Library</span>
-            </motion.div>
+            </Motion.div>
           ) : view === 'mylist' ? (
             /* MY LIST VIEW */
-            <motion.div 
+            <Motion.div 
               key="list" 
-              initial={{ opacity: 0, y: 20 }} 
+              initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
             >
               <MyList user={user} onMovieClick={handleMovieSelect} onBack={() => setView('home')} />
-            </motion.div>
+            </Motion.div>
           ) : (
             /* HOME VIEW */
-            <motion.div 
+            <Motion.div 
               key="home" 
               className="relative"
               initial={{ opacity: 0 }} 
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: reducedMotion ? 0.15 : 0.25 }}
             >
-              <motion.div style={{ filter: reducedMotion ? 'none' : `blur(${heroBlur}px)` }}>
-                <Hero
-                  movies={trendingMovies}
-                  onSearchClick={() => setIsSearchOpen(true)}
-                  onPlay={handlePlay}
-                  onInfo={handleMovieSelect}
-                />
-              </motion.div>
+              <Hero
+                movies={trendingMovies}
+                onSearchClick={() => setIsSearchOpen(true)}
+                onPlay={handlePlay}
+                onInfo={handleMovieSelect}
+              />
 
               <div className="relative mt-20 z-20 space-y-16 md:space-y-24 pb-40">
                 {user && (
-                  <motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+                  <Motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
                     <ContinueWatching user={user} onMovieClick={handleMovieSelect} />
-                  </motion.div>
+                  </Motion.div>
                 )}
 
                 {[
@@ -271,12 +275,12 @@ const Home = () => {
                   { title: "Anime Movies", data: animeMovies },
                   { title: "Romantic Escapes", data: romanceMovies }
                 ].map((row, i) => (
-                  <motion.div key={i} variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+                  <Motion.div key={i} variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
                     <MovieRow title={row.title} movies={row.data} onMovieClick={handleMovieSelect} />
-                  </motion.div>
+                  </Motion.div>
                 ))}
               </div>
-            </motion.div>
+            </Motion.div>
           )}
         </AnimatePresence>
       </main>
@@ -284,12 +288,13 @@ const Home = () => {
       {/* OVERLAYS */}
       <AnimatePresence>
         {isSearchOpen && (
-          <motion.div 
+          <Motion.div 
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-3xl"
+            transition={{ duration: reducedMotion ? 0.15 : 0.2 }}
+            className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md"
           >
             <SearchPage onClose={() => setIsSearchOpen(false)} onMovieClick={handleMovieSelect} />
-          </motion.div>
+          </Motion.div>
         )}
       </AnimatePresence>
 

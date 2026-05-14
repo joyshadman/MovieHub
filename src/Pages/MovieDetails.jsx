@@ -1,6 +1,5 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Play, Star, X, Globe, Loader2, ArrowLeft, 
@@ -11,12 +10,12 @@ import WatchPage from './Watch';
 import { auth } from '../components/firebase'; // Ensure correct path
 
 const fader = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } }
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.16, 1, 0.3, 1] } },
 };
 
 const staggerContainer = {
-  visible: { transition: { staggerChildren: 0.1 } }
+  visible: { transition: { staggerChildren: 0.04 } },
 };
 
 const MovieDetails = () => {
@@ -74,15 +73,13 @@ const MovieDetails = () => {
     };
 
     fetchFullDetails();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo(0, 0);
     return () => unsub();
   }, [id, location.pathname]);
 
   if (loading) return (
     <div className="h-screen w-full flex flex-col items-center justify-center bg-[#050505]">
-      <motion.div animate={{ scale: [1, 1.2, 1], rotate: 360 }} transition={{ duration: 2, repeat: Infinity }}>
-        <Loader2 className="w-12 h-12 text-red-600" />
-      </motion.div>
+      <Loader2 className="w-12 h-12 text-red-600 animate-spin" />
       <p className="mt-4 text-[10px] font-black uppercase tracking-[0.5em] text-white/20">Syncing Data</p>
     </div>
   );
@@ -109,29 +106,31 @@ const MovieDetails = () => {
       </AnimatePresence>
 
       <div className="fixed inset-0 z-0">
-        <motion.div 
+        <Motion.div 
           initial={{ opacity: 0 }} animate={{ opacity: 0.3 }}
-          className="absolute inset-0 bg-cover bg-center transition-opacity duration-1000"
+          transition={{ duration: 0.35 }}
+          className="absolute inset-0 bg-cover bg-center"
           style={{ backgroundImage: `url(https://image.tmdb.org/t/p/original${movie.backdrop_path})` }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050505]/80 to-[#050505]" />
-        <div className="absolute inset-0 backdrop-blur-[80px]" />
+        <div className="absolute inset-0 backdrop-blur-xl bg-[#050505]/30" />
       </div>
 
       <div className="relative z-10 max-w-7xl mx-auto px-6 py-20 lg:py-32">
-        <motion.button 
-          initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
+        <Motion.button 
+          initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.25 }}
           onClick={() => navigate(-1)}
-          className="group flex items-center gap-3 text-white/40 hover:text-white transition-all uppercase font-black text-[10px] tracking-[0.4em] mb-16"
+          className="group flex items-center gap-3 text-white/40 hover:text-white transition-colors uppercase font-black text-[10px] tracking-[0.4em] mb-16"
         >
-          <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" /> Exit Archive
-        </motion.button>
+          <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform duration-200" /> Exit Archive
+        </Motion.button>
 
-        <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-[450px_1fr] gap-12 lg:gap-24">
+        <Motion.div variants={staggerContainer} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-[450px_1fr] gap-12 lg:gap-24">
           
-          <motion.div variants={fader} className="flex flex-col gap-8">
+          <Motion.div variants={fader} className="flex flex-col gap-8">
             <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-red-600/20 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+              <div className="absolute -inset-1 bg-gradient-to-r from-red-600/20 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
               <div className="relative aspect-[2/3] rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl bg-zinc-900">
                 <img src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} className="w-full h-full object-cover" alt={movie.title} />
               </div>
@@ -149,35 +148,35 @@ const MovieDetails = () => {
                 <span className="text-sm font-bold">{movie.vote_average?.toFixed(1)}</span>
               </div>
             </div>
-          </motion.div>
+          </Motion.div>
 
           <div className="flex flex-col">
-            <motion.div variants={fader} className="flex items-center gap-4 mb-6">
+            <Motion.div variants={fader} className="flex items-center gap-4 mb-6">
               <span className="px-4 py-1 rounded-full bg-red-600 text-[10px] font-black uppercase tracking-widest">
                 {movie.type === 'tv' ? 'Series' : 'Feature'}
               </span>
               <span className="text-[10px] font-black uppercase tracking-widest text-white/30">8K Mastering</span>
-            </motion.div>
+            </Motion.div>
 
-            <motion.h1 variants={fader} className="text-5xl md:text-7xl lg:text-9xl font-black italic tracking-tighter leading-none uppercase mb-10 text-transparent bg-clip-text bg-gradient-to-b from-white to-white/40">
+            <Motion.h1 variants={fader} className="text-5xl md:text-7xl lg:text-9xl font-black italic tracking-tighter leading-none uppercase mb-10 text-transparent bg-clip-text bg-gradient-to-b from-white to-white/40">
               {movie.title}
-            </motion.h1>
+            </Motion.h1>
 
-            <motion.p variants={fader} className="text-white/50 text-lg lg:text-2xl font-medium leading-relaxed mb-12 max-w-3xl italic">
+            <Motion.p variants={fader} className="text-white/50 text-lg lg:text-2xl font-medium leading-relaxed mb-12 max-w-3xl italic">
               {movie.overview}
-            </motion.p>
+            </Motion.p>
 
-            <motion.div variants={fader} className="mb-20">
-              <motion.button 
+            <Motion.div variants={fader} className="mb-20">
+              <Motion.button 
                 whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                 onClick={() => setShowPlayer(true)}
                 className="flex items-center gap-4 bg-white text-black px-12 py-6 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:bg-red-600 hover:text-white transition-all duration-500"
               >
                 <Play size={20} fill="currentColor" /> Watch Now
-              </motion.button>
-            </motion.div>
+              </Motion.button>
+            </Motion.div>
 
-            <motion.div variants={fader} className="space-y-10">
+            <Motion.div variants={fader} className="space-y-10">
               <h3 className="text-[10px] font-black uppercase tracking-[0.6em] text-white/20 flex items-center gap-3"><Users size={14} /> Personnel Registry</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
                 {cast.slice(0, 5).map((actor) => (
@@ -190,16 +189,16 @@ const MovieDetails = () => {
                   </div>
                 ))}
               </div>
-            </motion.div>
+            </Motion.div>
 
-            <motion.div variants={fader} className="mt-20 pt-10 border-t border-white/5 grid grid-cols-2 md:grid-cols-4 gap-8">
+            <Motion.div variants={fader} className="mt-20 pt-10 border-t border-white/5 grid grid-cols-2 md:grid-cols-4 gap-8">
               <StatBlock icon={<Zap size={14}/>} label="Resolution" value="4K_ATMOS" />
               <StatBlock icon={<Cpu size={14}/>} label="Encoding" value="HEVC.H265" />
               <StatBlock icon={<Monitor size={14}/>} label="IMDb ID" value={imdbId || 'REF_NULL'} />
               <StatBlock icon={<Globe size={14}/>} label="Network" value="Secure_Node" />
-            </motion.div>
+            </Motion.div>
           </div>
-        </motion.div>
+        </Motion.div>
       </div>
     </div>
   );

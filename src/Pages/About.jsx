@@ -11,18 +11,29 @@ import {
 import { auth, db } from '../components/firebase';
 import {
   collection, addDoc, onSnapshot, query, orderBy,
-  deleteDoc, doc, updateDoc, serverTimestamp, setDoc
+  deleteDoc, doc, serverTimestamp, setDoc
 } from 'firebase/firestore';
+import {
+  profileImgAttrs,
+  githubSizedAvatarUrl,
+  dicebearAvatarUrl,
+  uiAvatarsFallback,
+} from '../utils/avatarUrls';
 
 const About = () => {
-  const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || "")
-    .split(",")
-    .map(email => email.trim()); const [avatarUrl, setAvatarUrl] = useState(null);
+  const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim())
+    .filter(Boolean);
+  const [avatarUrl, setAvatarUrl] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [siteUsers, setSiteUsers] = useState([]);
   const [newUpdate, setNewUpdate] = useState("");
   const [newVersion, setNewVersion] = useState("v1.0");
   const [isAdmin, setIsAdmin] = useState(false);
+
+  const joyProfileFallback =
+    import.meta.env.VITE_GITHUB_AVATAR_URL || uiAvatarsFallback('Joy Shadman');
 
   const { scrollYProgress } = useScroll();
   const user = auth.currentUser;
@@ -49,11 +60,22 @@ const About = () => {
   // 2. FETCH DATA (Updates & Personnel)
   useEffect(() => {
     if (user && ADMIN_EMAILS.includes(user.email)) setIsAdmin(true);
+    else setIsAdmin(false);
 
-    fetch('https://api.github.com/users/joyshadman')
-      .then(res => res.json())
-      .then(data => setAvatarUrl(data.avatar_url + '&s=600'))
-      .catch(() => setAvatarUrl("https://github.com/joyshadman.png"));
+    const heroFallback = joyProfileFallback;
+
+    fetch('https://api.github.com/users/joyshadman', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.avatar_url) {
+          setAvatarUrl(heroFallback);
+          return;
+        }
+        setAvatarUrl(githubSizedAvatarUrl(data.avatar_url, 400));
+      })
+      .catch(() => setAvatarUrl(heroFallback));
 
     const qUpdates = query(collection(db, "site_updates"), orderBy("timestamp", "desc"));
     const unsubUpdates = onSnapshot(qUpdates, (snapshot) => {
@@ -154,7 +176,16 @@ const About = () => {
               >
                 <div className="absolute inset-0 bg-red-600/20 blur-3xl scale-125 rounded-full" />
                 <div className="relative w-72 h-72 rounded-[4rem] border border-white/10 p-2 bg-zinc-900 overflow-hidden shadow-2xl">
-                  <img src={avatarUrl || "https://github.com/joyshadman.png"} className="w-full h-full object-cover rounded-[3.5rem] grayscale group-hover:grayscale-0 transition-all duration-700" alt="Joy" />
+                  <img
+                    src={avatarUrl || joyProfileFallback}
+                    className="w-full h-full object-cover rounded-[3.5rem] grayscale group-hover:grayscale-0 transition-all duration-700"
+                    alt="Joy"
+                    {...profileImgAttrs}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = joyProfileFallback;
+                    }}
+                  />
                 </div>
               </motion.div>
               <div className="flex-1 space-y-6 text-center md:text-left">
@@ -270,7 +301,18 @@ const About = () => {
                   >
                     <div className="flex items-center gap-5 mb-6">
                       <div className="relative">
-                        <img src={u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.email}`} className="w-16 h-16 rounded-2xl object-cover grayscale group-hover:grayscale-0 transition-all" alt="User" />
+                        <img
+                          src={u.photoURL || dicebearAvatarUrl(u.email || u.displayName || u.id)}
+                          className="w-16 h-16 rounded-2xl object-cover grayscale group-hover:grayscale-0 transition-all"
+                          alt=""
+                          {...profileImgAttrs}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = dicebearAvatarUrl(
+                              u.email || u.displayName || String(u.id)
+                            );
+                          }}
+                        />
                         <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-zinc-900 ${u.isOnline ? 'bg-green-500 animate-pulse' : 'bg-zinc-700'}`} />
                       </div>
                       <div className="overflow-hidden">

@@ -1,19 +1,25 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { auth, db } from './components/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Toaster } from 'react-hot-toast';
 
-// Pages
 import Navbar from './components/Navbar';
-import Home from './Pages/Home';
-import SearchPage from './Pages/Search';
-import MyList from './Pages/MyList';
-import Categories from './Pages/Categories';
-import MovieDetails from './Pages/MovieDetails';
-import About from './Pages/About';
+
+const Home = lazy(() => import('./Pages/Home'));
+const SearchPage = lazy(() => import('./Pages/Search'));
+const MyList = lazy(() => import('./Pages/MyList'));
+const Categories = lazy(() => import('./Pages/Categories'));
+const MovieDetails = lazy(() => import('./Pages/MovieDetails'));
+const About = lazy(() => import('./Pages/About'));
+
+const RouteFallback = () => (
+  <div className="min-h-[50vh] flex flex-col items-center justify-center bg-[#050505] text-white gap-4 px-6">
+    <div className="h-9 w-9 border-2 border-white/15 border-t-red-600 rounded-full animate-spin" />
+    <p className="text-[9px] font-black uppercase tracking-[0.35em] text-white/35">Loading</p>
+  </div>
+);
 
 /**
  * Helper component to ensure page starts at top on navigation
@@ -73,32 +79,27 @@ const AppContent = ({ user }) => {
       <Navbar user={user} onMovieClick={handleMovieClick} />
       
       <main className="">
-        <Routes>
-          {/* Main Pages */}
-          <Route path="/" element={<Home user={user} onMovieClick={handleMovieClick} />} />
-          <Route path="/search" element={<SearchPage onMovieClick={handleMovieClick} />} />
-          <Route path="/mylist" element={<MyList user={user} onMovieClick={handleMovieClick} />} />
-          <Route path="/categories" element={<Categories onMovieClick={handleMovieClick} />} />
-          <Route path="/about" element={<About />} />
-          
-          {/* DYNAMIC DETAILS ROUTE 
-              Matches the <Link to={`/details/${current.type}/${current.id}`}> in Hero.jsx
-          */}
-          <Route 
-            path="/details/:type/:id" 
-            element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />} 
-          />
-
-          {/* Fallback Legacy Routes (Optional) */}
-          <Route 
-            path="/movie/:id" 
-            element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />} 
-          />
-          <Route 
-            path="/tv/:id" 
-            element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />} 
-          />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<Home user={user} onMovieClick={handleMovieClick} />} />
+            <Route path="/search" element={<SearchPage onMovieClick={handleMovieClick} />} />
+            <Route path="/mylist" element={<MyList user={user} onMovieClick={handleMovieClick} />} />
+            <Route path="/categories" element={<Categories onMovieClick={handleMovieClick} />} />
+            <Route path="/about" element={<About />} />
+            <Route
+              path="/details/:type/:id"
+              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
+            />
+            <Route
+              path="/movie/:id"
+              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
+            />
+            <Route
+              path="/tv/:id"
+              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
+            />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );
@@ -108,6 +109,7 @@ const App = () => {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
+    getRedirectResult(auth).catch((err) => console.error('Redirect sign-in:', err));
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
     });

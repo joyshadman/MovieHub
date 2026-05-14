@@ -1,14 +1,14 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { 
   Search, LogOut, Play, X, ShieldCheck, Home, 
   LayoutGrid, Info, ChevronDown, Bookmark, Menu 
 } from 'lucide-react';
 import { auth, googleProvider, db } from './firebase';
-import { signInWithPopup, signOut } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
+import { profileImgAttrs, uiAvatarsFallback } from '../utils/avatarUrls';
 
 const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -68,8 +68,21 @@ const Navbar = () => {
 
   const signIn = async () => {
     try {
+      const useRedirect =
+        typeof window !== 'undefined' &&
+        (window.matchMedia?.('(pointer: coarse)')?.matches ||
+          window.innerWidth < 768 ||
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+          ));
+      if (useRedirect) {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
       await signInWithPopup(auth, googleProvider);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleSignOut = async () => {
@@ -86,9 +99,9 @@ const Navbar = () => {
   ];
 
   const dropdownVariants = {
-    hidden: { opacity: 0, y: 10, scale: 0.95, filter: 'blur(10px)' },
-    visible: { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)', transition: { duration: 0.2, ease: "easeOut" } },
-    exit: { opacity: 0, y: 5, scale: 0.98, filter: 'blur(10px)', transition: { duration: 0.15 } }
+    hidden: { opacity: 0, y: 8 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
+    exit: { opacity: 0, y: 4, transition: { duration: 0.12 } },
   };
 
   return (
@@ -98,15 +111,13 @@ const Navbar = () => {
         ${isScrolled ? 'pt-2' : 'pt-4'}`}>
         
         <div className="flex justify-center px-4 w-full">
-          <motion.nav 
-            initial={{ y: -100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
+          <nav
             className={`
               pointer-events-auto flex items-center justify-between gap-4 px-5 py-2.5 rounded-[2.5rem] 
-              transition-all duration-700 border border-white/10
+              transition-all duration-300 border border-white/10
               ${isScrolled 
-                ? 'w-full md:w-[95%] lg:w-[85%] bg-black/40 backdrop-blur-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)]' 
-                : 'w-full md:w-[90%] lg:w-[75%] bg-white/[0.02] backdrop-blur-xl'
+                ? 'w-full md:w-[95%] lg:w-[85%] bg-black/40 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)]' 
+                : 'w-full md:w-[90%] lg:w-[75%] bg-white/[0.02] backdrop-blur-md'
               }
             `}
           >
@@ -159,18 +170,27 @@ const Navbar = () => {
 
               {user ? (
                 <div className="relative hidden md:block" ref={dropdownRef}>
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
+                  <button 
+                    type="button"
                     onClick={() => setShowDropdown(!showDropdown)}
-                    className="flex items-center gap-2 p-1 pr-3 bg-white/[0.03] border border-white/10 rounded-full hover:bg-white/10 transition-all backdrop-blur-2xl"
+                    className="flex items-center gap-2 p-1 pr-3 bg-white/[0.03] border border-white/10 rounded-full hover:bg-white/10 transition-all backdrop-blur-md active:scale-[0.98]"
                   >
-                    <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-white/20" />
+                    <img
+                      src={user.photoURL}
+                      alt="user"
+                      className="w-8 h-8 rounded-full border border-white/20 object-cover"
+                      {...profileImgAttrs}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = uiAvatarsFallback(user.displayName || user.email || 'User');
+                      }}
+                    />
                     <ChevronDown size={14} className={`text-white/40 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
-                  </motion.button>
+                  </button>
 
                   <AnimatePresence>
                     {showDropdown && (
-                      <motion.div 
+                      <Motion.div 
                         variants={dropdownVariants}
                         initial="hidden" animate="visible" exit="exit"
                         className="absolute top-full right-0 mt-4 w-60 bg-black/80 backdrop-blur-[50px] border border-white/10 rounded-[2.5rem] p-3 shadow-2xl z-[150] overflow-hidden"
@@ -186,7 +206,7 @@ const Navbar = () => {
                         <button onClick={handleSignOut} className="flex items-center gap-3 w-full p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 transition-all">
                           <LogOut size={16} /> Disconnect
                         </button>
-                      </motion.div>
+                      </Motion.div>
                     )}
                   </AnimatePresence>
                 </div>
@@ -200,7 +220,7 @@ const Navbar = () => {
                 <Menu size={18} />
               </button>
             </div>
-          </motion.nav>
+          </nav>
         </div>
       </div>
 
@@ -208,15 +228,16 @@ const Navbar = () => {
       <AnimatePresence>
         {showMobileMenu && (
           <>
-            <motion.div 
+            <Motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
               onClick={() => setShowMobileMenu(false)}
-              className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md md:hidden"
+              className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm md:hidden"
             />
-            <motion.div 
+            <Motion.div 
               initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-y-0 right-0 w-[85%] z-[210] bg-[#050505]/95 backdrop-blur-2xl border-l border-white/10 p-8 flex flex-col md:hidden"
+              transition={{ type: 'tween', duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+              className="fixed inset-y-0 right-0 w-[85%] z-[210] bg-[#050505]/95 backdrop-blur-md border-l border-white/10 p-8 flex flex-col md:hidden"
             >
               <div className="flex justify-between items-center mb-12">
                 <div className="flex items-center gap-3">
@@ -228,7 +249,16 @@ const Navbar = () => {
 
               {user ? (
                 <div className="flex items-center gap-4 p-5 bg-white/5 rounded-[2.5rem] border border-white/10 mb-8">
-                  <img src={user.photoURL} className="w-12 h-12 rounded-full border-2 border-red-600" alt="" />
+                  <img
+                    src={user.photoURL}
+                    className="w-12 h-12 rounded-full border-2 border-red-600 object-cover"
+                    alt=""
+                    {...profileImgAttrs}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = uiAvatarsFallback(user.displayName || user.email || 'User');
+                    }}
+                  />
                   <div className="flex flex-col">
                     <span className="text-[10px] font-black uppercase text-white tracking-widest">{user.displayName}</span>
                     <span className="text-[8px] font-bold text-red-600 uppercase tracking-tighter">Verified Node</span>
@@ -259,7 +289,7 @@ const Navbar = () => {
                   </button>
                 </div>
               )}
-            </motion.div>
+            </Motion.div>
           </>
         )}
       </AnimatePresence>
@@ -268,10 +298,11 @@ const Navbar = () => {
       <AnimatePresence>
         {showAuthModal && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowAuthModal(false)} className="absolute inset-0 bg-black/90 backdrop-blur-2xl" />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 30 }}
-              className="relative w-full max-w-sm bg-[#0a0a0a]/80 backdrop-blur-[80px] border border-white/10 rounded-[3.5rem] p-10 text-center shadow-2xl overflow-hidden"
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} onClick={() => setShowAuthModal(false)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <Motion.div 
+              initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="relative w-full max-w-sm bg-[#0a0a0a]/90 backdrop-blur-md border border-white/10 rounded-[3.5rem] p-10 text-center shadow-2xl overflow-hidden"
             >
               <div className="bg-red-600/20 w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-red-600/30">
                 <ShieldCheck size={32} className="text-red-600" />
@@ -285,7 +316,7 @@ const Navbar = () => {
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="" />
                 Sign in with Google
               </button>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>
