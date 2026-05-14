@@ -6,7 +6,7 @@ import {
   LayoutGrid, Info, ChevronDown, Bookmark, Menu 
 } from 'lucide-react';
 import { auth, googleProvider, db } from './firebase';
-import { signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, signOut, getRedirectResult  } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { profileImgAttrs, uiAvatarsFallback } from '../utils/avatarUrls';
 
@@ -23,6 +23,11 @@ const Navbar = () => {
 
   useEffect(() => {
     // Detect scroll to swap between transparent and glassy modes
+       getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) setShowAuthModal(false);
+      })
+      .catch(console.error);
     const handleScroll = () => {
       if (window.scrollY > 20) {
         setIsScrolled(true);
@@ -66,25 +71,21 @@ const Navbar = () => {
     };
   }, []);
 
-  const signIn = async () => {
-    try {
-      const useRedirect =
-        typeof window !== 'undefined' &&
-        (window.matchMedia?.('(pointer: coarse)')?.matches ||
-          window.innerWidth < 768 ||
-          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-            navigator.userAgent
-          ));
-      if (useRedirect) {
+const signIn = async () => {
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (err) {
+    if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+      try {
         await signInWithRedirect(auth, googleProvider);
-        return;
+      } catch (redirectErr) {
+        console.error('Sign in failed:', redirectErr);
       }
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
+    } else {
       console.error(err);
     }
-  };
-
+  }
+};
   const handleSignOut = async () => {
     await signOut(auth);
     setShowDropdown(false);
