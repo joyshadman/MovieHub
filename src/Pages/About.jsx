@@ -64,18 +64,23 @@ const About = () => {
 
     const heroFallback = joyProfileFallback;
 
-    fetch('https://api.github.com/users/joyshadman', {
-      headers: { Accept: 'application/vnd.github+json' },
-    })
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.avatar_url) {
-          setAvatarUrl(heroFallback);
-          return;
-        }
-        setAvatarUrl(githubSizedAvatarUrl(data.avatar_url, 400));
-      })
-      .catch(() => setAvatarUrl(heroFallback));
+    // Replace the fetch block inside your second useEffect with this:
+
+fetch('https://api.github.com/users/joyshadman', {
+  headers: { Accept: 'application/vnd.github+json' },
+})
+  .then((res) => {
+    if (!res.ok) throw new Error('GitHub API error');
+    return res.json();
+  })
+  .then((data) => {
+    if (data?.avatar_url) {
+      setAvatarUrl(githubSizedAvatarUrl(data.avatar_url, 400));
+    } else {
+      setAvatarUrl(joyProfileFallback);
+    }
+  })
+  .catch(() => setAvatarUrl(joyProfileFallback));
 
     const qUpdates = query(collection(db, "site_updates"), orderBy("timestamp", "desc"));
     const unsubUpdates = onSnapshot(qUpdates, (snapshot) => {
