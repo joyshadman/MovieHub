@@ -127,7 +127,7 @@ const signIn = async () => {
               <div className="bg-red-600/20 backdrop-blur-xl p-2.5 rounded-2xl border border-red-600/30 group-hover:bg-red-600 transition-all duration-500 shadow-lg shadow-red-600/20">
                 <Play size={18} fill="white" className="text-white" />
               </div>
-              <h1 className="text-[14px] font-black italic tracking-tighter text-white uppercase hidden sm:block">
+              <h1 className="text-[14px] font-black italic tracking-tighter text-white uppercase block">
                 MOVIE<span className="text-red-600">HUB</span>
               </h1>
             </Link>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
@@ -14,6 +14,19 @@ import SearchPage from './Search';
 import MyList from './MyList';
 import ContinueWatching from './ContinueWatching';
 import DeviceModal from '../components/DeviceModal'; 
+
+// --- LOW-END DEVICE DETECTION ---
+// navigator.deviceMemory (RAM in GB) and hardwareConcurrency (CPU cores) are
+// reliable, cheap signals available on most Android Chrome browsers.
+// Defaults to "not low-end" if unsupported (iOS Safari, etc.)
+const isLowEndDevice = () => {
+  if (typeof navigator === 'undefined') return false;
+  const mem = navigator.deviceMemory;
+  const cores = navigator.hardwareConcurrency;
+  if (mem && mem <= 4) return true;
+  if (cores && cores <= 4) return true;
+  return false;
+};
 
 const Home = () => {
   const navigate = useNavigate();
@@ -39,7 +52,13 @@ const Home = () => {
 
   const [playingMovie, setPlayingMovie] = useState(null);
   const [loading, setLoading] = useState(true);
-  const reducedMotion = useReducedMotion();
+
+  // Combine user's OS-level reduced-motion preference with a device-capability
+  // check — low-end devices get the lighter animation profile regardless of
+  // their OS setting, since heavy transforms/blur cause visible jank.
+  const prefersReducedMotionOS = useReducedMotion();
+  const isLowEnd = useMemo(() => isLowEndDevice(), []);
+  const reducedMotion = prefersReducedMotionOS || isLowEnd;
 
   const rowReveal = reducedMotion
     ? {
@@ -84,43 +103,59 @@ const Home = () => {
     };
   }, []);
 
-  // 2. DATA FETCHING — show hero after trending loads; fill rows in the background
+  // 2. DATA FETCHING — show hero after trending loads; fill rows in the
+  // background. On low-end devices, secondary rows are fetched in smaller
+  // batches with a tiny delay between each so the main thread isn't flooded
+  // with JSON parsing + state updates + re-renders all at once.
   useEffect(() => {
     let cancelled = false;
 
-    const extractResults = (settled, idx) => {
-      const r = settled[idx];
-      if (!r || r.status !== 'fulfilled') return [];
-      const v = r.value;
+    const secondaryFetchers = [
+      { key: 'topRatedMovies', fn: () => movieApi.getTopRated('movie'), set: setTopRatedMovies },
+      { key: 'topRatedSeries', fn: () => movieApi.getTopRated('tv'), set: setTopRatedSeries },
+      { key: 'actionMovies', fn: () => movieApi.getByGenre(28), set: setActionMovies },
+      { key: 'comedyMovies', fn: () => movieApi.getByGenre(35), set: setComedyMovies },
+      { key: 'thrillerMovies', fn: () => movieApi.getByGenre(53), set: setThrillerMovies },
+      { key: 'horrorMovies', fn: () => movieApi.getByGenre(27), set: setHorrorMovies },
+      { key: 'bollywood', fn: () => movieApi.getBollywood(1), set: setBollywood },
+      { key: 'romanceMovies', fn: () => movieApi.getByGenre(10749), set: setRomanceMovies },
+      { key: 'banglaMovies', fn: () => movieApi.getBanglaMovies(1), set: setBanglaMovies },
+      { key: 'animeSeries', fn: () => movieApi.getAnime('tv', 1), set: setAnimeSeries },
+      { key: 'animeMovies', fn: () => movieApi.getAnime('movie', 1), set: setAnimeMovies },
+    ];
+
+    const unwrap = (settled) => {
+      if (!settled || settled.status !== 'fulfilled') return [];
+      const v = settled.value;
       return Array.isArray(v) ? v : v?.results || [];
     };
 
-    const loadSecondary = () => {
-      Promise.allSettled([
-        movieApi.getTopRated('movie'),
-        movieApi.getTopRated('tv'),
-        movieApi.getByGenre(28),
-        movieApi.getByGenre(35),
-        movieApi.getByGenre(53),
-        movieApi.getByGenre(27),
-        movieApi.getBollywood(1),
-        movieApi.getByGenre(10749),
-        movieApi.getBanglaMovies(1),
-        movieApi.getAnime('tv', 1),
-        movieApi.getAnime('movie', 1),
-      ]).then((results) => {
+    const loadSecondaryBatched = async () => {
+      // Split into chunks of 3 requests; yield to the main thread between
+      // chunks via requestIdleCallback (falls back to setTimeout).
+      const idle = (cb) =>
+        (window.requestIdleCallback || ((c) => setTimeout(c, 50)))(cb);
+
+      const chunkSize = isLowEnd ? 2 : 4;
+      for (let i = 0; i < secondaryFetchers.length; i += chunkSize) {
         if (cancelled) return;
-        setTopRatedMovies(extractResults(results, 0));
-        setTopRatedSeries(extractResults(results, 1));
-        setActionMovies(extractResults(results, 2));
-        setComedyMovies(extractResults(results, 3));
-        setThrillerMovies(extractResults(results, 4));
-        setHorrorMovies(extractResults(results, 5));
-        setBollywood(extractResults(results, 6));
-        setRomanceMovies(extractResults(results, 7));
-        setBanglaMovies(extractResults(results, 8));
-        setAnimeSeries(extractResults(results, 9));
-        setAnimeMovies(extractResults(results, 10));
+        const chunk = secondaryFetchers.slice(i, i + chunkSize);
+        const settled = await Promise.allSettled(chunk.map((c) => c.fn()));
+        if (cancelled) return;
+        settled.forEach((res, idx) => {
+          chunk[idx].set(unwrap(res));
+        });
+        // Yield before fetching the next chunk so layout/paint can happen
+        await new Promise((resolve) => idle(resolve));
+      }
+    };
+
+    const loadSecondaryUnbatched = () => {
+      Promise.allSettled(secondaryFetchers.map((c) => c.fn())).then((results) => {
+        if (cancelled) return;
+        results.forEach((res, idx) => {
+          secondaryFetchers[idx].set(unwrap(res));
+        });
       });
     };
 
@@ -139,7 +174,12 @@ const Home = () => {
       } finally {
         if (!cancelled) setLoading(false);
       }
-      loadSecondary();
+
+      if (isLowEnd) {
+        loadSecondaryBatched();
+      } else {
+        loadSecondaryUnbatched();
+      }
     })();
 
     return () => {
@@ -207,9 +247,16 @@ const Home = () => {
       {/* Global First Time Visited / Sign up device check modal */}
       <DeviceModal />
 
-      {/* GLOSSY AMBIENT BACKGROUND */}
+      {/* GLOSSY AMBIENT BACKGROUND
+          On low-end devices, large blur radii (100-120px) are extremely GPU
+          expensive and cause scroll jank. Skip the blur entirely and use a
+          plain low-opacity gradient instead. */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[100px] md:blur-[120px] rounded-full mix-blend-plus-lighter opacity-[0.18]" />
+        {isLowEnd ? (
+          <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/5 rounded-full opacity-[0.18]" />
+        ) : (
+          <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[100px] md:blur-[120px] rounded-full mix-blend-plus-lighter opacity-[0.18]" />
+        )}
       </div>
 
       <main className="relative z-10 flex-grow">
@@ -251,6 +298,7 @@ const Home = () => {
                 onSearchClick={() => setIsSearchOpen(true)}
                 onPlay={handlePlay}
                 onInfo={handleMovieSelect}
+                lowEnd={isLowEnd}
               />
 
               <div className="relative mt-20 z-20 space-y-16 md:space-y-24 pb-40">
@@ -275,9 +323,19 @@ const Home = () => {
                   { title: "Anime Movies", data: animeMovies },
                   { title: "Romantic Escapes", data: romanceMovies }
                 ].map((row, i) => (
-                  <Motion.div key={i} variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                    <MovieRow title={row.title} movies={row.data} onMovieClick={handleMovieSelect} />
-                  </Motion.div>
+                  // Skip empty rows entirely instead of rendering a MovieRow
+                  // with no data — avoids unnecessary DOM nodes / observers.
+                  row.data && row.data.length > 0 ? (
+                    <Motion.div
+                      key={i}
+                      variants={rowReveal}
+                      initial="hidden"
+                      whileInView="visible"
+                      viewport={{ once: true, margin: "100px" }}
+                    >
+                      <MovieRow title={row.title} movies={row.data} onMovieClick={handleMovieSelect} lazyImages />
+                    </Motion.div>
+                  ) : null
                 ))}
               </div>
             </Motion.div>
@@ -291,7 +349,7 @@ const Home = () => {
           <Motion.div 
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: reducedMotion ? 0.15 : 0.2 }}
-            className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md"
+            className={`fixed inset-0 z-[150] bg-black/80 ${isLowEnd ? '' : 'backdrop-blur-md'}`}
           >
             <SearchPage onClose={() => setIsSearchOpen(false)} onMovieClick={handleMovieSelect} />
           </Motion.div>

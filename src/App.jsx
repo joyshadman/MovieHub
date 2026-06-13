@@ -7,7 +7,10 @@ import { Toaster } from 'react-hot-toast';
 
 import Navbar from './components/Navbar';
 
-const Home = lazy(() => import('./Pages/Home'));
+// Home loads eagerly (not lazy) since it's the landing page —
+// avoids an extra network round-trip + loading flash on first paint
+import Home from './Pages/Home';
+
 const SearchPage = lazy(() => import('./Pages/Search'));
 const MyList = lazy(() => import('./Pages/MyList'));
 const Categories = lazy(() => import('./Pages/Categories'));
@@ -21,9 +24,6 @@ const RouteFallback = () => (
   </div>
 );
 
-/**
- * Helper component to ensure page starts at top on navigation
- */
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -39,45 +39,45 @@ const AppContent = ({ user }) => {
   useEffect(() => {
     if (!user) return;
 
-    setDoc(
-      doc(db, "users", user.uid),
-      {
-        displayName: user.displayName || "Anonymous",
-        email: user.email || null,
-        photoURL: user.photoURL || null,
-        isOnline: true,
-        currentPage: location.pathname,
-        watching: `Browsing ${location.pathname}`,
-        lastActive: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch((err) => console.error("Page tracking error:", err));
+    // Defer Firestore presence write so it doesn't compete with
+    // initial render/paint on slow devices
+    const idleId = (window.requestIdleCallback || ((cb) => setTimeout(cb, 200)))(() => {
+      setDoc(
+        doc(db, "users", user.uid),
+        {
+          displayName: user.displayName || "Anonymous",
+          email: user.email || null,
+          photoURL: user.photoURL || null,
+          isOnline: true,
+          currentPage: location.pathname,
+          watching: `Browsing ${location.pathname}`,
+          lastActive: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch((err) => console.error("Page tracking error:", err));
+    });
+
+    return () => {
+      if (window.cancelIdleCallback) window.cancelIdleCallback(idleId);
+    };
   }, [user, location.pathname]);
 
-  // CENTRAL NAVIGATION LOGIC
-  // This handles clicks from Hero, Search, or Grid items
   const handleMovieClick = (movie) => {
     if (!movie || !movie.id) return;
-
-    // Determine if it's a movie or tv show
     const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     const id = movie.id;
-
-    // Navigate to the dynamic route used by your Hero component
     navigate(`/details/${type}/${id}`);
   };
 
-  // Watchlist Toggle Logic (placeholder or Firebase logic)
   const handleWatchlistToggle = (movie) => {
     console.log("Watchlist action for:", movie.title || movie.name);
-    // Add your Firebase Firestore logic here
   };
 
   return (
     <div className="min-h-screen bg-[#050505] text-white">
       <ScrollToTop />
       <Navbar user={user} onMovieClick={handleMovieClick} />
-      
+
       <main className="">
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -118,8 +118,8 @@ const App = () => {
 
   return (
     <Router>
-      <Toaster 
-        position="bottom-right" 
+      <Toaster
+        position="bottom-right"
         toastOptions={{
           style: {
             background: '#1a1a1a',

@@ -2,11 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  ChevronLeft, Zap, ShieldCheck, 
+  ChevronLeft, ShieldCheck, 
   Server, Globe, ChevronDown, PlayCircle,
-  LayoutGrid, StretchHorizontal, Monitor, Cpu,
+  LayoutGrid, StretchHorizontal, Cpu,
   RefreshCcw, Lightbulb, LightbulbOff,
-  ExternalLink, Maximize, SkipForward, Repeat
+  ExternalLink, Maximize, SkipForward, Repeat,
+  RadioTower, Zap as ZapIcon
 } from 'lucide-react';
 import { Helmet } from "react-helmet";
 import { db, auth } from '../components/firebase';
@@ -29,6 +30,10 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [theaterMode, setTheaterMode] = useState(false);
   const [autoReplay, setAutoReplay] = useState(false);
 
+  // --- AUTO SOURCE SWITCHER STATES ---
+  const [autoSwitch, setAutoSwitch] = useState(true);
+  const [failedSources, setFailedSources] = useState([]);
+
   useEffect(() => {
     if (user) {
       setCurrentUser(user);
@@ -40,7 +45,7 @@ const WatchPage = ({ movie, user, onClose }) => {
 
   const sources = [
     { id: 'vidsrc_pro', name: 'VidSrc Pro', icon: <Server size={14} /> },
-    { id: 'vidsrc_cc', name: 'VidSrc CC', icon: <Zap size={14} /> },
+    { id: 'vidsrc_cc', name: 'VidSrc CC', icon: <RadioTower size={14} /> },
     { id: 'vidlink', name: 'VidLink', icon: <Globe size={14} /> },
     { id: 'vidsrc_xyz', name: 'VidSrc XYZ', icon: <Cpu size={14} /> },
   ];
@@ -164,6 +169,42 @@ const WatchPage = ({ movie, user, onClose }) => {
     ).catch((err) => console.error("Activity update error:", err));
   }, [activeSource, season, episode, movie?.id, currentUser, user]);
 
+  // Reset failed-sources tracker whenever the movie/show changes
+  useEffect(() => {
+    setFailedSources([]);
+  }, [movie.id]);
+
+  // AUTO SOURCE SWITCHER:
+  // If the iframe doesn't fire onLoad within the timeout window, assume the
+  // current source is dead/slow and cycle to the next untried source.
+  useEffect(() => {
+    if (!autoSwitch) return;
+
+    setIsLoading(true);
+    const timeoutId = setTimeout(() => {
+      setIsLoading((stillLoading) => {
+        if (stillLoading) {
+          setFailedSources((prev) => {
+            const updated = [...new Set([...prev, activeSource])];
+            const nextSource = sources.find((s) => !updated.includes(s.id));
+            if (nextSource) {
+              setActiveSource(nextSource.id);
+              return updated;
+            }
+            // All sources exhausted — reset and retry from scratch
+            setActiveSource(sources[0].id);
+            return [];
+          });
+          setShieldActive(true);
+          return true; // keep loading flag true until new iframe loads
+        }
+        return stillLoading;
+      });
+    }, 9000); // 9s per source before switching
+
+    return () => clearTimeout(timeoutId);
+  }, [activeSource, season, episode, autoSwitch]);
+
   const getSourceUrl = () => {
     const isTV = movie.type === 'tv' || !!movie.first_air_date;
     const id = movie.id;
@@ -206,6 +247,14 @@ const WatchPage = ({ movie, user, onClose }) => {
     window.open(getSourceUrl(), 'PiP', 'width=800,height=450,menubar=no,status=no');
   };
 
+  const handleManualSourceChange = (id) => {
+    setActiveSource(id);
+    setIsLoading(true);
+    setShieldActive(true);
+    // Manual pick shouldn't be immediately re-flagged as failed if it's slow
+    setFailedSources((prev) => prev.filter((f) => f !== id));
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -231,33 +280,34 @@ const WatchPage = ({ movie, user, onClose }) => {
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-red-600/10 blur-[120px] rounded-full" />
       </div>
 
-      <div className={`relative mx-auto px-4 md:px-10 py-8 md:py-12 space-y-8 transition-all duration-700 ${theaterMode ? 'max-w-full' : 'max-w-7xl'} ${cinemaMode ? 'z-[520]' : ''}`}>
+      <div className={`relative mx-auto px-3 sm:px-4 md:px-10 py-6 sm:py-8 md:py-12 space-y-6 sm:space-y-8 transition-all duration-700 ${theaterMode ? 'max-w-full' : 'max-w-7xl'} ${cinemaMode ? 'z-[520]' : ''}`}>
         
         {/* HEADER SECTION */}
-        <div className={`flex flex-col lg:flex-row lg:items-end justify-between gap-6 border-b border-white/5 pb-8 transition-all duration-500 ${cinemaMode ? 'opacity-0 h-0 overflow-hidden mb-0' : 'opacity-100'}`}>
-          <div className="space-y-4">
+        <div className={`flex flex-col lg:flex-row lg:items-end justify-between gap-4 sm:gap-6 border-b border-white/5 pb-6 sm:pb-8 transition-all duration-500 ${cinemaMode ? 'opacity-0 h-0 overflow-hidden mb-0' : 'opacity-100'}`}>
+          <div className="space-y-3 sm:space-y-4">
             <button onClick={onClose} className="group flex items-center gap-2 text-white/40 hover:text-white transition-all text-xs font-black uppercase tracking-widest">
               <div className="p-2 rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
                 <ChevronLeft size={18} />
               </div>
               Exit Player
             </button>
-            <h1 className="text-3xl md:text-5xl font-black italic uppercase tracking-tighter leading-none">
+            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black italic uppercase tracking-tighter leading-none break-words">
               {movie.title || movie.name}
-              {movie.type === 'tv' && <span className="text-red-600 ml-4 text-2xl not-italic">S{season} E{episode}</span>}
+              {movie.type === 'tv' && <span className="text-red-600 ml-2 sm:ml-4 text-lg sm:text-2xl not-italic">S{season} E{episode}</span>}
             </h1>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 w-full lg:w-auto">
             {/* SOURCE PICKER */}
-            <div className="flex bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-full overflow-x-auto no-scrollbar">
+            <div className="flex flex-wrap sm:flex-nowrap bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-2xl sm:rounded-full overflow-x-auto no-scrollbar gap-1 w-full sm:w-auto">
                 {sources.map(s => (
                 <button
                     key={s.id}
-                    onClick={() => { setActiveSource(s.id); setIsLoading(true); setShieldActive(true); }}
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-[10px] font-black uppercase transition-all whitespace-nowrap ${
+                    onClick={() => handleManualSourceChange(s.id)}
+                    className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase transition-all whitespace-nowrap flex-1 sm:flex-none ${
                     activeSource === s.id ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.2)]' : 'text-white/40 hover:text-white'
-                    }`}
+                    } ${failedSources.includes(s.id) ? 'opacity-40' : ''}`}
+                    title={failedSources.includes(s.id) ? 'This source failed to load recently' : s.name}
                 >
                     {s.icon} {s.name}
                 </button>
@@ -265,10 +315,17 @@ const WatchPage = ({ movie, user, onClose }) => {
             </div>
 
             {/* CONTROL CENTER */}
-            <div className="flex bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-full">
+            <div className="flex flex-wrap justify-center sm:justify-start bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-2xl sm:rounded-full gap-0.5">
                 <button onClick={handleRestart} className="p-2.5 hover:bg-white/10 rounded-full text-white/40 hover:text-red-500 transition-all" title="Restart Player"><RefreshCcw size={16} /></button>
                 <button onClick={togglePiP} className="p-2.5 hover:bg-white/10 rounded-full text-white/40 hover:text-blue-400 transition-all" title="Mini Player (PiP)"><ExternalLink size={16} /></button>
                 <button onClick={() => setTheaterMode(!theaterMode)} className={`p-2.5 rounded-full transition-all ${theaterMode ? 'text-blue-500 bg-blue-500/10' : 'text-white/40 hover:text-white hover:bg-white/10'}`} title="Theater Mode"><Maximize size={16} /></button>
+                <button 
+                  onClick={() => setAutoSwitch(!autoSwitch)} 
+                  className={`p-2.5 rounded-full transition-all ${autoSwitch ? 'text-green-500 bg-green-500/10' : 'text-white/40 hover:text-white hover:bg-white/10'}`} 
+                  title={`Auto Source Switch: ${autoSwitch ? 'On' : 'Off'}`}
+                >
+                  <ZapIcon size={16} />
+                </button>
                 <div className="w-[1px] h-4 bg-white/10 self-center mx-1" />
                 <button 
                   onClick={() => setCinemaMode(!cinemaMode)}
@@ -283,7 +340,7 @@ const WatchPage = ({ movie, user, onClose }) => {
 
         {/* PLAYER AREA */}
         <div className="space-y-4">
-          <div className={`relative aspect-video w-full rounded-[1.5rem] md:rounded-[3rem] overflow-hidden border border-white/10 bg-black transition-all duration-700 shadow-2xl ${cinemaMode ? 'scale-[1.02] shadow-red-600/30 ring-4 ring-white/5' : 'shadow-black'}`}>
+          <div className={`relative aspect-video w-full rounded-2xl sm:rounded-[1.5rem] md:rounded-[3rem] overflow-hidden border border-white/10 bg-black transition-all duration-700 shadow-2xl ${cinemaMode ? 'scale-[1.02] shadow-red-600/30 ring-4 ring-white/5' : 'shadow-black'}`}>
             {shieldActive && (
               <div className="absolute inset-0 z-40 cursor-pointer bg-transparent" onClick={() => setShieldActive(false)} />
             )}
@@ -303,7 +360,7 @@ const WatchPage = ({ movie, user, onClose }) => {
                 <motion.button 
                   initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
                   onClick={() => setCinemaMode(false)}
-                  className="absolute top-6 right-6 z-[60] p-4 bg-white text-black rounded-full shadow-[0_0_30px_rgba(255,255,255,0.6)] hover:scale-110 transition-transform"
+                  className="absolute top-4 right-4 sm:top-6 sm:right-6 z-[60] p-3 sm:p-4 bg-white text-black rounded-full shadow-[0_0_30px_rgba(255,255,255,0.6)] hover:scale-110 transition-transform"
                 >
                   <LightbulbOff size={20} />
                 </motion.button>
@@ -313,20 +370,25 @@ const WatchPage = ({ movie, user, onClose }) => {
             {/* LOADING OVERLAY */}
             <AnimatePresence>
               {isLoading && (
-                <motion.div exit={{ opacity: 0 }} className="absolute inset-0 bg-[#050505] flex flex-col items-center justify-center z-50">
-                  <div className="w-16 h-16 border-4 border-white/5 border-t-red-600 rounded-full animate-spin" />
-                  <p className="mt-6 text-[10px] font-black uppercase tracking-[0.5em] text-white/30 animate-pulse">Establishing Link</p>
+                <motion.div exit={{ opacity: 0 }} className="absolute inset-0 bg-[#050505] flex flex-col items-center justify-center z-50 px-4 text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 border-4 border-white/5 border-t-red-600 rounded-full animate-spin" />
+                  <p className="mt-4 sm:mt-6 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.4em] sm:tracking-[0.5em] text-white/30 animate-pulse">Establishing Link</p>
+                  {autoSwitch && (
+                    <p className="mt-2 text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.2em] text-white/15 flex items-center gap-1.5">
+                      <ShieldCheck size={12} /> Auto-switch active — will try another source if this stalls
+                    </p>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
 
           {/* PLAYER SUB-BAR */}
-          <div className={`flex items-center justify-between px-4 transition-opacity ${cinemaMode ? 'opacity-0' : 'opacity-100'}`}>
-            <div className="flex items-center gap-4">
+          <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 px-2 sm:px-4 transition-opacity ${cinemaMode ? 'opacity-0' : 'opacity-100'}`}>
+            <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
               <button 
                 onClick={() => setAutoReplay(!autoReplay)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase transition-all ${autoReplay ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                className={`flex items-center justify-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase transition-all flex-1 sm:flex-none ${autoReplay ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
               >
                 <Repeat size={14} /> Auto Replay {autoReplay ? 'On' : 'Off'}
               </button>
@@ -335,7 +397,7 @@ const WatchPage = ({ movie, user, onClose }) => {
             {(movie.type === 'tv' || !!movie.first_air_date) && (
               <button 
                 onClick={handleNextEpisode}
-                className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-full text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all group"
+                className="flex items-center justify-center gap-2 px-6 py-2 bg-white text-black rounded-full text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all group w-full sm:w-auto"
               >
                 Next Episode <SkipForward size={14} className="group-hover:translate-x-1 transition-transform" />
               </button>
@@ -343,30 +405,30 @@ const WatchPage = ({ movie, user, onClose }) => {
           </div>
         </div>
 
-        {/* TV SHOWS - EPISODE SELECTOR */}
+
         {(movie.type === 'tv' || !!movie.first_air_date) && (
-          <div className={`space-y-8 pb-20 transition-all duration-500 ${cinemaMode ? 'opacity-0 pointer-events-none translate-y-10' : 'opacity-100 translate-y-0'}`}>
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex items-center gap-6">
-                <h3 className="text-xl md:text-3xl font-black uppercase italic tracking-tighter">Selection</h3>
+          <div className={`space-y-6 sm:space-y-8 pb-16 sm:pb-20 transition-all duration-500 ${cinemaMode ? 'opacity-0 pointer-events-none translate-y-10' : 'opacity-100 translate-y-0'}`}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
+              <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                <h3 className="text-lg sm:text-xl md:text-3xl font-black uppercase italic tracking-tighter">Selection</h3>
                 <div className="relative">
                   <select 
                     value={season} 
                     onChange={(e) => { setSeason(Number(e.target.value)); setEpisode(1); setIsLoading(true); }}
-                    className="bg-white/5 border border-white/10 rounded-xl py-2.5 px-6 pr-10 text-xs font-black uppercase text-red-500 outline-none appearance-none cursor-pointer hover:bg-white/10 transition-colors"
+                    className="bg-white/5 border border-white/10 rounded-xl py-2.5 px-5 sm:px-6 pr-9 sm:pr-10 text-xs font-black uppercase text-red-500 outline-none appearance-none cursor-pointer hover:bg-white/10 transition-colors"
                   >
                     {seasonsData.map(s => <option key={s.id} value={s.season_number} className="bg-zinc-900">Season {s.season_number}</option>)}
                   </select>
-                  <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                  <ChevronDown size={14} className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
                 </div>
               </div>
-              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5 self-start md:self-auto">
                 <button onClick={() => setLayout("row")} className={`p-2.5 rounded-lg transition-all ${layout === "row" ? "bg-white/10 text-white" : "text-white/20"}`}><StretchHorizontal size={18} /></button>
                 <button onClick={() => setLayout("grid")} className={`p-2.5 rounded-lg transition-all ${layout === "grid" ? "bg-white/10 text-white" : "text-white/20"}`}><LayoutGrid size={18} /></button>
               </div>
             </div>
 
-            <div className={`grid gap-4 md:gap-6 ${layout === "row" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-4 sm:grid-cols-6 lg:grid-cols-10"}`}>
+            <div className={`grid gap-3 sm:gap-4 md:gap-6 ${layout === "row" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-3 sm:grid-cols-6 lg:grid-cols-10"}`}>
               {episodesList.map((ep) => (
                 <button
                   key={ep.id}
@@ -374,8 +436,8 @@ const WatchPage = ({ movie, user, onClose }) => {
                   className={`group relative overflow-hidden transition-all duration-500 ${layout === "row" ? "p-3 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-red-500/50" : "aspect-square flex items-center justify-center rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/20"} ${episode === ep.episode_number ? "border-red-600 bg-red-600/10 ring-1 ring-red-600/50" : ""}`}
                 >
                   {layout === "row" ? (
-                    <div className="flex gap-4">
-                      <div className="relative w-32 aspect-video rounded-lg overflow-hidden shrink-0">
+                    <div className="flex gap-3 sm:gap-4">
+                      <div className="relative w-24 sm:w-32 aspect-video rounded-lg overflow-hidden shrink-0">
                         <img src={`https://image.tmdb.org/t/p/w300${ep.still_path}`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" onError={(e) => e.target.src = 'https://placehold.co/300x169/111/fff?text=No+Preview'} />
                         <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><PlayCircle size={24} className="text-white" /></div>
                       </div>
