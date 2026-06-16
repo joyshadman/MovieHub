@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import "./LoadingScreen.css";
 
-export default function LoadingScreen({
+export default function Loadingscreen({
   minDuration = 3400,
   onComplete,
   logoText = "MovieHub",
