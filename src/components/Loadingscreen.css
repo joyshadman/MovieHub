@@ -1,0 +1,151 @@
+/* ============================================================
+   MovieHub — Cinematic High-Performance Loading Screen
+   Optimized for buttery smooth 60fps across all devices.
+   ============================================================ */
+
+.mh-loader-container {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-color: #050505;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1), 
+              visibility 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.mh-loader-container.mh-fade-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.loader-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  width: auto;
+  
+  /* Responsive typography scales beautifully without pixelation */
+  font-family: "Poppins", sans-serif;
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  user-select: none;
+  color: #fff;
+  
+  /* Core layout performance optimizations */
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+.loader {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-color: transparent;
+  pointer-events: none;
+  mask: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent 6px,
+    black 7px,
+    black 8px
+  );
+}
+
+.loader::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  
+  background-image: 
+    radial-gradient(circle at 50% 50%, #ff0 0%, transparent 50%),
+    radial-gradient(circle at 45% 45%, #f00 0%, transparent 45%),
+    radial-gradient(circle at 55% 55%, #0ff 0%, transparent 45%),
+    radial-gradient(circle at 45% 55%, #0f0 0%, transparent 45%),
+    radial-gradient(circle at 55% 44%, #00f 0%, transparent 45%);
+  
+  mask: radial-gradient(
+    circle at 50% 50%,
+    transparent 0%,
+    transparent 10%,
+    black 25%
+  );
+
+  /* Elongated cinematic duration cycles */
+  animation:
+    transform-animation 3.5s infinite alternate,
+    opacity-animation 7s infinite;
+  animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  
+  will-change: transform, opacity;
+}
+
+@keyframes transform-animation {
+  0% { transform: translate3d(-60%, 0, 0); }
+  100% { transform: translate3d(60%, 0, 0); }
+}
+
+@keyframes opacity-animation {
+  0%, 100% { opacity: 0; }
+  15% { opacity: 1; }
+  60% { opacity: 0; }
+}
+
+.loader-letter {
+  display: inline-block;
+  opacity: 0;
+  animation: loader-letter-anim 7s infinite linear;
+  z-index: 2;
+  will-change: transform, opacity;
+}
+
+/* Staggered text reveal synced to extended timeline */
+.loader-letter:nth-child(1) { animation-delay: 0.15s; }
+.loader-letter:nth-child(2) { animation-delay: 0.35s; }
+.loader-letter:nth-child(3) { animation-delay: 0.55s; }
+.loader-letter:nth-child(4) { animation-delay: 0.75s; }
+.loader-letter:nth-child(5) { animation-delay: 0.95s; }
+.loader-letter:nth-child(6) { animation-delay: 1.15s; }
+.loader-letter:nth-child(7) { animation-delay: 1.35s; }
+.loader-letter:nth-child(8) { animation-delay: 1.55s; }
+
+@keyframes loader-letter-anim {
+  0% { 
+    opacity: 0; 
+    transform: scale3d(0.95, 0.95, 1) translate3d(0, 0, 0);
+  }
+  4% {
+    opacity: 1;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.8), 0 0 20px rgba(255, 255, 255, 0.4);
+    transform: scale3d(1.08, 1.08, 1) translate3d(0, -6px, 0);
+  }
+  18% {
+    opacity: 0.25;
+    transform: scale3d(1, 1, 1) translate3d(0, 0, 0);
+  }
+  55%, 100% {
+    opacity: 0;
+  }
+}
+
+/* Prefers reduced motion compliance overrides */
+@media (prefers-reduced-motion: reduce) {
+  .loader::after,
+  .loader-letter {
+    animation: none !important;
+  }
+  .loader-letter {
+    opacity: 1;
+  }
+  .loader {
+    display: none;
+  }
+}

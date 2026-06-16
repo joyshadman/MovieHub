@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
-import { auth, db } from '../components/firebase'; 
+import { auth, db } from '../components/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // Components
@@ -13,7 +13,7 @@ import Watch from './Watch';
 import SearchPage from './Search';
 import MyList from './MyList';
 import ContinueWatching from './ContinueWatching';
-import DeviceModal from '../components/DeviceModal'; 
+
 
 // --- LOW-END DEVICE DETECTION ---
 // navigator.deviceMemory (RAM in GB) and hardwareConcurrency (CPU cores) are
@@ -48,7 +48,7 @@ const Home = () => {
   const [animeSeries, setAnimeSeries] = useState([]);
   const [animeMovies, setAnimeMovies] = useState([]);
   const [romanceMovies, setRomanceMovies] = useState([]);
-  const [history, setHistory] = useState([]); 
+  const [history, setHistory] = useState([]);
 
   const [playingMovie, setPlayingMovie] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -62,17 +62,17 @@ const Home = () => {
 
   const rowReveal = reducedMotion
     ? {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1, transition: { duration: 0.2 } },
-      }
+      hidden: { opacity: 0 },
+      visible: { opacity: 1, transition: { duration: 0.2 } },
+    }
     : {
-        hidden: { opacity: 0, y: 16 },
-        visible: {
-          opacity: 1,
-          y: 0,
-          transition: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] },
-        },
-      };
+      hidden: { opacity: 0, y: 16 },
+      visible: {
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] },
+      },
+    };
 
   // 1. AUTH & HISTORY SYNC
   useEffect(() => {
@@ -89,12 +89,12 @@ const Home = () => {
           if (docSnap.exists()) {
             const historyData = docSnap.data().items || [];
             setHistory([...historyData].sort((a, b) => b.watchedAt - a.watchedAt));
-          } else { 
-            setHistory([]); 
+          } else {
+            setHistory([]);
           }
         });
-      } else { 
-        setHistory([]); 
+      } else {
+        setHistory([]);
       }
     });
     return () => {
@@ -190,11 +190,11 @@ const Home = () => {
   // 3. HANDLERS
   const handleMovieSelect = (movie) => {
     if (!movie || !movie.id) return;
-    setIsSearchOpen(false); 
+    setIsSearchOpen(false);
     const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     navigate(`/${type}/${movie.id}`);
   };
-  
+
   const handlePlay = async (movie) => {
     setIsSearchOpen(false);
     setPlayingMovie(movie);
@@ -211,16 +211,16 @@ const Home = () => {
       const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
 
       // Normalize shape so ContinueWatching & WatchPage see consistent fields
-      const movieData = { 
+      const movieData = {
         ...movie,
         id: movie.id,
         type: isTV ? 'tv' : 'movie',
         title: movie.title || movie.name,
-        poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500') 
-          ? movie.image.replace('https://image.tmdb.org/t/p/w500', '') 
+        poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500')
+          ? movie.image.replace('https://image.tmdb.org/t/p/w500', '')
           : movie.poster_path),
-        backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original') 
-          ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '') 
+        backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original')
+          ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '')
           : movie.backdrop_path),
         release_date: movie.release_date || movie.year,
         first_air_date: isTV ? (movie.first_air_date || movie.year) : null,
@@ -233,19 +233,16 @@ const Home = () => {
       const filtered = history.filter(
         item =>
           !(String(item.id) === String(movie.id) &&
-          (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType)
+            (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType)
       );
       const updated = [movieData, ...filtered].slice(0, 20);
-      
+
       await setDoc(historyRef, { items: updated }, { merge: true });
     }
   };
 
   return (
     <div className="min-h-screen bg-[#020202] text-white selection:bg-red-600 font-sans overflow-x-hidden flex flex-col">
-      
-      {/* Global First Time Visited / Sign up device check modal */}
-      <DeviceModal />
 
       {/* GLOSSY AMBIENT BACKGROUND
           On low-end devices, large blur radii (100-120px) are extremely GPU
@@ -262,21 +259,21 @@ const Home = () => {
       <main className="relative z-10 flex-grow">
         <AnimatePresence mode="wait">
           {loading ? (
-            <Motion.div 
+            <Motion.div
               key="loader"
               initial={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
               className="h-screen flex flex-col items-center justify-center bg-[#020202] fixed inset-0 z-[200]"
             >
-               <div className="w-12 h-12 border-2 border-white/10 border-t-red-600 rounded-full animate-spin" />
-               <span className="mt-8 text-[8px] font-black uppercase tracking-[1.5em] text-white/30">Syncing Library</span>
+              <div className="w-12 h-12 border-2 border-white/10 border-t-red-600 rounded-full animate-spin" />
+              <span className="mt-8 text-[8px] font-black uppercase tracking-[1.5em] text-white/30">Syncing Library</span>
             </Motion.div>
           ) : view === 'mylist' ? (
             /* MY LIST VIEW */
-            <Motion.div 
-              key="list" 
-              initial={{ opacity: 0, y: 10 }} 
+            <Motion.div
+              key="list"
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
@@ -285,10 +282,10 @@ const Home = () => {
             </Motion.div>
           ) : (
             /* HOME VIEW */
-            <Motion.div 
-              key="home" 
+            <Motion.div
+              key="home"
               className="relative"
-              initial={{ opacity: 0 }} 
+              initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: reducedMotion ? 0.15 : 0.25 }}
@@ -346,12 +343,16 @@ const Home = () => {
       {/* OVERLAYS */}
       <AnimatePresence>
         {isSearchOpen && (
-          <Motion.div 
+          <Motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: reducedMotion ? 0.15 : 0.2 }}
             className={`fixed inset-0 z-[150] bg-black/80 ${isLowEnd ? '' : 'backdrop-blur-md'}`}
           >
-            <SearchPage onClose={() => setIsSearchOpen(false)} onMovieClick={handleMovieSelect} />
+            <SearchPage
+              onClose={() => setIsSearchOpen(false)}
+              onMovieClick={handleMovieSelect}
+              openRouterApiKey={import.meta.env.VITE_OPENROUTER_API_KEY}
+            />
           </Motion.div>
         )}
       </AnimatePresence>
@@ -362,7 +363,7 @@ const Home = () => {
         )}
       </AnimatePresence>
 
-      <Footer/>
+      <Footer />
     </div>
   );
 };

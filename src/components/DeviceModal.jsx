@@ -1,28 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const DeviceModal = () => {
+const DeviceModal = ({ isAppReady }) => {
   const [showDevicePopup, setShowDevicePopup] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // Keep hidden until the loading screen signals completion
+    if (!isAppReady) return;
 
     // Check if the user has visited MovieHub before
     const hasVisitedBefore = localStorage.getItem('moviehub_first_time_user');
 
-    // If there is no record, they are a first-ever visitor or signing up for the first time
+    // If there is no record, trigger the first-time welcome popup
     if (!hasVisitedBefore) {
-      // Smooth 1-second delay to let the initial landing animations settle
+      // Increased delay to 2000ms (2 seconds) so landing UI animations fully settle
       const timer = setTimeout(() => {
         setShowDevicePopup(true);
-      }, 1000);
+      }, 2000);
+      
       return () => clearTimeout(timer);
     }
-  }, []);
+  }, [isAppReady]);
 
   const handleClosePopup = () => {
     setShowDevicePopup(false);
-    // Set item so this modal will never trigger again for this browser session/user history
+    // Persist to local storage so it won't interrupt future sessions
     localStorage.setItem('moviehub_first_time_user', 'returning');
   };
 
@@ -31,7 +33,6 @@ const DeviceModal = () => {
     visible: { opacity: 1 },
   };
 
-  // Fixed variant definitions: Flexbox handles layout alignment, Framer Motion handles standard scale/opacity transitions.
   const modalVariants = {
     hidden: {
       scale: 0.85,
@@ -42,8 +43,8 @@ const DeviceModal = () => {
       opacity: 1,
       transition: {
         type: 'spring',
-        stiffness: 350,
-        damping: 26,
+        stiffness: 300,
+        damping: 28,
       },
     },
     exit: {
@@ -51,12 +52,10 @@ const DeviceModal = () => {
       opacity: 0,
       transition: {
         ease: 'easeInOut',
-        duration: 0.2,
+        duration: 0.25,
       },
     },
   };
-
-  if (!showDevicePopup) return null;
 
   return (
     <AnimatePresence>
@@ -78,7 +77,7 @@ const DeviceModal = () => {
             exit="exit"
             onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
           >
-            {/* Red accent glow */}
+            {/* Red ambient glow highlights */}
             <div className="absolute -top-10 -left-10 w-32 h-32 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
 

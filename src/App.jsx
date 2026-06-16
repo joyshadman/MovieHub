@@ -5,17 +5,26 @@ import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Toaster } from 'react-hot-toast';
 
+import LoadingScreen from './components/LoadingScreen';
 import Navbar from './components/Navbar';
+import DeviceModal from './components/DeviceModal';
 
-// Home loads eagerly (not lazy) since it's the landing page —
-// avoids an extra network round-trip + loading flash on first paint
-import Home from './Pages/Home';
-
+const Home = lazy(() => import('./Pages/Home'));
 const SearchPage = lazy(() => import('./Pages/Search'));
 const MyList = lazy(() => import('./Pages/MyList'));
 const Categories = lazy(() => import('./Pages/Categories'));
 const MovieDetails = lazy(() => import('./Pages/MovieDetails'));
 const About = lazy(() => import('./Pages/About'));
+
+const getDeviceModel = () => {
+  const ua = navigator.userAgent;
+  if (/android/i.test(ua)) return "Android Device";
+  if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) return "iOS Device";
+  if (/Macintosh/.test(ua)) return "Mac";
+  if (/Windows/.test(ua)) return "Windows PC";
+  if (/Linux/.test(ua)) return "Linux PC";
+  return "Unknown Device";
+};
 
 const RouteFallback = () => (
   <div className="min-h-[50vh] flex flex-col items-center justify-center bg-[#050505] text-white gap-4 px-6">
@@ -32,41 +41,33 @@ const ScrollToTop = () => {
   return null;
 };
 
-const AppContent = ({ user }) => {
+const AppContent = ({ user, isAppReady }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isAppReady) return;
 
-    // Defer Firestore presence write so it doesn't compete with
-    // initial render/paint on slow devices
-    const idleId = (window.requestIdleCallback || ((cb) => setTimeout(cb, 200)))(() => {
-      setDoc(
-        doc(db, "users", user.uid),
-        {
-          displayName: user.displayName || "Anonymous",
-          email: user.email || null,
-          photoURL: user.photoURL || null,
-          isOnline: true,
-          currentPage: location.pathname,
-          watching: `Browsing ${location.pathname}`,
-          lastActive: serverTimestamp(),
-        },
-        { merge: true }
-      ).catch((err) => console.error("Page tracking error:", err));
-    });
-
-    return () => {
-      if (window.cancelIdleCallback) window.cancelIdleCallback(idleId);
-    };
-  }, [user, location.pathname]);
+    setDoc(
+      doc(db, "users", user.uid),
+      {
+        displayName: user.displayName || "Anonymous",
+        email: user.email || null,
+        photoURL: user.photoURL || null,
+        isOnline: true,
+        deviceModel: getDeviceModel(),
+        currentPage: location.pathname,
+        watching: `Browsing ${location.pathname}`,
+        lastActive: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((err) => console.error("Page tracking error:", err));
+  }, [user, location.pathname, isAppReady]);
 
   const handleMovieClick = (movie) => {
     if (!movie || !movie.id) return;
     const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
-    const id = movie.id;
-    navigate(`/details/${type}/${id}`);
+    navigate(`/details/${type}/${movie.id}`);
   };
 
   const handleWatchlistToggle = (movie) => {
@@ -78,7 +79,7 @@ const AppContent = ({ user }) => {
       <ScrollToTop />
       <Navbar user={user} onMovieClick={handleMovieClick} />
 
-      <main className="">
+      <main>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<Home user={user} onMovieClick={handleMovieClick} />} />
@@ -107,17 +108,43 @@ const AppContent = ({ user }) => {
 
 const App = () => {
   const [user, setUser] = useState(null);
+  const [showLoading, setShowLoading] = useState(() => {
+    return !sessionStorage.getItem('hasLoadedBefore');
+  });
+  const [isAppReady, setIsAppReady] = useState(() => {
+    return !!sessionStorage.getItem('hasLoadedBefore');
+  });
 
   useEffect(() => {
     getRedirectResult(auth).catch((err) => console.error('Redirect sign-in:', err));
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (showLoading) {
+      const timer = setTimeout(() => {
+        sessionStorage.setItem('hasLoadedBefore', 'true');
+        setShowLoading(false);
+        setIsAppReady(true);
+      }, 2800);
+      return () => clearTimeout(timer);
+    }
+  }, [showLoading]);
+
   return (
     <Router>
+      {showLoading && (
+        <LoadingScreen
+          minDuration={2800}
+          logoText="MovieHub"
+          tagline="Stream Everything"
+          loadingLabel="Loading"
+        />
+      )}
+
+      <DeviceModal isAppReady={isAppReady} />
+
       <Toaster
         position="bottom-right"
         toastOptions={{
@@ -131,7 +158,7 @@ const App = () => {
           }
         }}
       />
-      <AppContent user={user} />
+      <AppContent user={user} isAppReady={isAppReady} />
     </Router>
   );
 };
