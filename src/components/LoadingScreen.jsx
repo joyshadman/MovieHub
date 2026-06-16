@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import "./LoadingScreen.css";
+import "./Loadingscreen.css";
 
 export default function Loadingscreen({
   minDuration = 3400,
