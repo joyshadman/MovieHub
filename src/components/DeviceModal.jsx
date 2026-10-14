@@ -1,127 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { MonitorSmartphone } from 'lucide-react';
+import Modal from './ui/Modal';
+import Button from './ui/Button';
 
+// First visit welcome tip (shown once per browser, after the startup screen).
 const DeviceModal = ({ isAppReady }) => {
   const [showDevicePopup, setShowDevicePopup] = useState(false);
 
   useEffect(() => {
     // Keep hidden until the loading screen signals completion
-    if (!isAppReady) return;
-
-    // Check if the user has visited MovieHub before
+    if (!isAppReady) return undefined;
     const hasVisitedBefore = localStorage.getItem('moviehub_first_time_user');
-
-    // If there is no record, trigger the first-time welcome popup
     if (!hasVisitedBefore) {
-      // Increased delay to 2000ms (2 seconds) so landing UI animations fully settle
-      const timer = setTimeout(() => {
-        setShowDevicePopup(true);
-      }, 2000);
-      
+      // Delay so landing animations settle first
+      const timer = setTimeout(() => setShowDevicePopup(true), 2000);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [isAppReady]);
 
   const handleClosePopup = () => {
     setShowDevicePopup(false);
-    // Persist to local storage so it won't interrupt future sessions
     localStorage.setItem('moviehub_first_time_user', 'returning');
   };
 
-  const backdropVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1 },
-  };
-
-  const modalVariants = {
-    hidden: {
-      scale: 0.85,
-      opacity: 0,
-    },
-    visible: {
-      scale: 1,
-      opacity: 1,
-      transition: {
-        type: 'spring',
-        stiffness: 300,
-        damping: 28,
-      },
-    },
-    exit: {
-      scale: 0.85,
-      opacity: 0,
-      transition: {
-        ease: 'easeInOut',
-        duration: 0.25,
-      },
-    },
-  };
-
   return (
-    <AnimatePresence>
-      {showDevicePopup && (
-        <motion.div
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-          variants={backdropVariants}
-          initial="hidden"
-          animate="visible"
-          exit="hidden"
-          onClick={handleClosePopup} // Close when clicking backdrop
-        >
-          {/* Animated Glassmorphic Card */}
-          <motion.div
-            className="relative max-w-md w-full bg-[#121212]/90 backdrop-blur-lg border border-red-900/50 rounded-3xl p-8 text-center shadow-2xl shadow-red-950/30 overflow-hidden"
-            variants={modalVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
-          >
-            {/* Red ambient glow highlights */}
-            <div className="absolute -top-10 -left-10 w-32 h-32 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
-
-            {/* Minimalist Graphic Icon Frame */}
-            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-950/30 border border-red-800/50 mb-6 shadow-inner shadow-red-950/50">
-              <svg className="h-8 w-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM3 12h1m8-9v1m8 8h1M4.93 4.93l.7.7m12.72 12.72l.7.7M19.07 4.93l-.7.7M4.93 19.07l.7-.7"
-                />
-              </svg>
-            </div>
-
-            {/* Welcome Header */}
-            <h3 className="text-xl font-bold text-white tracking-wider uppercase mb-2">
-              Welcome to <span className="text-red-500">MovieHub</span>
-            </h3>
-            <p className="text-xs text-neutral-500 uppercase tracking-widest mb-6">
-              Experience Optimization
-            </p>
-
-            {/* Modal Body Text */}
-            <div className="text-base text-neutral-300 leading-relaxed mb-8 space-y-4">
-              <p>
-                We're thrilled to have you here! To ensure you enjoy the absolute best cinematic journey, <span className="text-white font-medium">MovieHub</span> is meticulously designed for high-performance devices.
-              </p>
-              <p>
-                Our platform provides a seamless, best-in-class responsive experience, dynamically optimizing for <span className="text-white font-medium">Mobile</span>, <span className="text-white font-medium">Tablet</span>, and <span className="text-white font-medium">Desktop</span> environments.
-              </p>
-            </div>
-
-            {/* Action Button */}
-            <button
-              onClick={handleClosePopup}
-              className="w-full py-3.5 px-6 rounded-xl bg-red-600 text-white font-bold text-sm tracking-widest uppercase hover:bg-red-700 active:bg-red-800 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-[#121212] shadow-lg shadow-red-950/50"
-            >
-              Start Exploring
-            </button>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <Modal open={showDevicePopup} onClose={handleClosePopup} labelledBy="welcome-title" className="max-w-md text-center">
+      <span className="mx-auto mb-5 h-14 w-14 rounded-full bg-accent/15 border border-accent/40 flex items-center justify-center text-accent-text">
+        <MonitorSmartphone size={26} aria-hidden="true" />
+      </span>
+      <h2 id="welcome-title" className="text-2xl font-bold">Welcome to <span className="text-accent-text">MovieHub</span></h2>
+      <div className="mt-4 space-y-3 text-sm text-muted">
+        <p>We are glad you are here. MovieHub is built for a smooth, cinematic experience and works best on recent devices.</p>
+        <p>It adapts to <span className="text-white">mobile</span>, <span className="text-white">tablet</span> and <span className="text-white">desktop</span>, so pick up wherever you like.</p>
+      </div>
+      <Button size="lg" className="w-full mt-7" onClick={handleClosePopup}>Start exploring</Button>
+    </Modal>
   );
 };
 

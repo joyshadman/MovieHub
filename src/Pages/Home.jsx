@@ -1,19 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
 import { auth, db } from '../components/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-
-// Components
 import Hero from '../components/Hero';
 import MovieRow from '../components/MovieRow';
-import Footer from '../components/Footer';
 import Watch from './Watch';
-import SearchPage from './Search';
-import MyList from './MyList';
 import ContinueWatching from './ContinueWatching';
-
+import { getRegion, regionName } from '../utils/region';
 
 // --- LOW-END DEVICE DETECTION ---
 // navigator.deviceMemory (RAM in GB) and hardwareConcurrency (CPU cores) are
@@ -31,8 +26,6 @@ const isLowEndDevice = () => {
 const Home = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('home'); // 'home' or 'mylist'
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Content States
   const [trendingMovies, setTrendingMovies] = useState([]);
@@ -48,31 +41,14 @@ const Home = () => {
   const [animeSeries, setAnimeSeries] = useState([]);
   const [animeMovies, setAnimeMovies] = useState([]);
   const [romanceMovies, setRomanceMovies] = useState([]);
+  const [topInRegion, setTopInRegion] = useState([]);
   const [history, setHistory] = useState([]);
 
   const [playingMovie, setPlayingMovie] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Combine user's OS-level reduced-motion preference with a device-capability
-  // check — low-end devices get the lighter animation profile regardless of
-  // their OS setting, since heavy transforms/blur cause visible jank.
-  const prefersReducedMotionOS = useReducedMotion();
   const isLowEnd = useMemo(() => isLowEndDevice(), []);
-  const reducedMotion = prefersReducedMotionOS || isLowEnd;
-
-  const rowReveal = reducedMotion
-    ? {
-      hidden: { opacity: 0 },
-      visible: { opacity: 1, transition: { duration: 0.2 } },
-    }
-    : {
-      hidden: { opacity: 0, y: 16 },
-      visible: {
-        opacity: 1,
-        y: 0,
-        transition: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] },
-      },
-    };
+  const region = useMemo(() => getRegion(), []);
 
   // 1. AUTH & HISTORY SYNC
   useEffect(() => {
@@ -103,25 +79,25 @@ const Home = () => {
     };
   }, []);
 
-  // 2. DATA FETCHING — show hero after trending loads; fill rows in the
+  // 2. DATA FETCHING: show the hero once trending loads; fill rows in the
   // background. On low-end devices, secondary rows are fetched in smaller
-  // batches with a tiny delay between each so the main thread isn't flooded
-  // with JSON parsing + state updates + re-renders all at once.
+  // batches with a short pause between each so the main thread isn't flooded.
   useEffect(() => {
     let cancelled = false;
 
     const secondaryFetchers = [
-      { key: 'topRatedMovies', fn: () => movieApi.getTopRated('movie'), set: setTopRatedMovies },
-      { key: 'topRatedSeries', fn: () => movieApi.getTopRated('tv'), set: setTopRatedSeries },
-      { key: 'actionMovies', fn: () => movieApi.getByGenre(28), set: setActionMovies },
-      { key: 'comedyMovies', fn: () => movieApi.getByGenre(35), set: setComedyMovies },
-      { key: 'thrillerMovies', fn: () => movieApi.getByGenre(53), set: setThrillerMovies },
-      { key: 'horrorMovies', fn: () => movieApi.getByGenre(27), set: setHorrorMovies },
-      { key: 'bollywood', fn: () => movieApi.getBollywood(1), set: setBollywood },
-      { key: 'romanceMovies', fn: () => movieApi.getByGenre(10749), set: setRomanceMovies },
-      { key: 'banglaMovies', fn: () => movieApi.getBanglaMovies(1), set: setBanglaMovies },
-      { key: 'animeSeries', fn: () => movieApi.getAnime('tv', 1), set: setAnimeSeries },
-      { key: 'animeMovies', fn: () => movieApi.getAnime('movie', 1), set: setAnimeMovies },
+      { fn: () => movieApi.getPopularInRegion(region), set: setTopInRegion },
+      { fn: () => movieApi.getTopRated('movie'), set: setTopRatedMovies },
+      { fn: () => movieApi.getTopRated('tv'), set: setTopRatedSeries },
+      { fn: () => movieApi.getByGenre(28), set: setActionMovies },
+      { fn: () => movieApi.getByGenre(35), set: setComedyMovies },
+      { fn: () => movieApi.getByGenre(53), set: setThrillerMovies },
+      { fn: () => movieApi.getByGenre(27), set: setHorrorMovies },
+      { fn: () => movieApi.getBollywood(1), set: setBollywood },
+      { fn: () => movieApi.getByGenre(10749), set: setRomanceMovies },
+      { fn: () => movieApi.getBanglaMovies(1), set: setBanglaMovies },
+      { fn: () => movieApi.getAnime('tv', 1), set: setAnimeSeries },
+      { fn: () => movieApi.getAnime('movie', 1), set: setAnimeMovies },
     ];
 
     const unwrap = (settled) => {
@@ -131,21 +107,14 @@ const Home = () => {
     };
 
     const loadSecondaryBatched = async () => {
-      // Split into chunks of 3 requests; yield to the main thread between
-      // chunks via requestIdleCallback (falls back to setTimeout).
-      const idle = (cb) =>
-        (window.requestIdleCallback || ((c) => setTimeout(c, 50)))(cb);
-
+      const idle = (cb) => (window.requestIdleCallback || ((c) => setTimeout(c, 50)))(cb);
       const chunkSize = isLowEnd ? 2 : 4;
       for (let i = 0; i < secondaryFetchers.length; i += chunkSize) {
         if (cancelled) return;
         const chunk = secondaryFetchers.slice(i, i + chunkSize);
         const settled = await Promise.allSettled(chunk.map((c) => c.fn()));
         if (cancelled) return;
-        settled.forEach((res, idx) => {
-          chunk[idx].set(unwrap(res));
-        });
-        // Yield before fetching the next chunk so layout/paint can happen
+        settled.forEach((res, idx) => chunk[idx].set(unwrap(res)));
         await new Promise((resolve) => idle(resolve));
       }
     };
@@ -153,9 +122,7 @@ const Home = () => {
     const loadSecondaryUnbatched = () => {
       Promise.allSettled(secondaryFetchers.map((c) => c.fn())).then((results) => {
         if (cancelled) return;
-        results.forEach((res, idx) => {
-          secondaryFetchers[idx].set(unwrap(res));
-        });
+        results.forEach((res, idx) => secondaryFetchers[idx].set(unwrap(res)));
       });
     };
 
@@ -175,28 +142,21 @@ const Home = () => {
         if (!cancelled) setLoading(false);
       }
 
-      if (isLowEnd) {
-        loadSecondaryBatched();
-      } else {
-        loadSecondaryUnbatched();
-      }
+      if (isLowEnd) loadSecondaryBatched();
+      else loadSecondaryUnbatched();
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    return () => { cancelled = true; };
+  }, [isLowEnd, region]);
 
   // 3. HANDLERS
   const handleMovieSelect = (movie) => {
     if (!movie || !movie.id) return;
-    setIsSearchOpen(false);
     const type = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     navigate(`/${type}/${movie.id}`);
   };
 
   const handlePlay = async (movie) => {
-    setIsSearchOpen(false);
     setPlayingMovie(movie);
 
     if (user) {
@@ -218,11 +178,11 @@ const Home = () => {
         title: movie.title || movie.name,
         poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500')
           ? movie.image.replace('https://image.tmdb.org/t/p/w500', '')
-          : movie.poster_path),
+          : movie.poster_path ?? null),
         backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original')
           ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '')
-          : movie.backdrop_path),
-        release_date: movie.release_date || movie.year,
+          : movie.backdrop_path ?? null),
+        release_date: movie.release_date || movie.year || null,
         first_air_date: isTV ? (movie.first_air_date || movie.year) : null,
         watchedAt: Date.now(),
         progress: existingItem?.progress || 0,
@@ -237,133 +197,49 @@ const Home = () => {
       );
       const updated = [movieData, ...filtered].slice(0, 20);
 
-      await setDoc(historyRef, { items: updated }, { merge: true });
+      try {
+        await setDoc(historyRef, { items: updated }, { merge: true });
+      } catch (err) {
+        console.error('History update error:', err);
+      }
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#020202] text-white selection:bg-red-600 font-sans overflow-x-hidden flex flex-col">
+  const rows = [
+    { title: 'Trending Now', data: trendingMovies, to: '/movies' },
+    { title: `Top 10 Movies in ${regionName(region)} Today`, data: topInRegion, ranked: true },
+    { title: 'Trending Series', data: trendingSeries, to: '/tv' },
+    { title: 'Top Rated Movies', data: topRatedMovies, to: '/movies' },
+    { title: 'Top Rated Series', data: topRatedSeries, to: '/tv' },
+    { title: 'Action Packed', data: actionMovies, to: '/categories/28' },
+    { title: 'Comedy Favourites', data: comedyMovies, to: '/categories/35' },
+    { title: 'Edge of Your Seat', data: thrillerMovies, to: '/categories/53' },
+    { title: 'Horror Essentials', data: horrorMovies, to: '/categories/27' },
+    { title: 'Bollywood Specials', data: bollywood, to: '/collection/bollywood' },
+    { title: 'Best of Bangla', data: banglaMovies, to: '/collection/bangla' },
+    { title: 'Anime Series', data: animeSeries, to: '/collection/anime' },
+    { title: 'Anime Movies', data: animeMovies, to: '/collection/anime?type=movie' },
+    { title: 'Romantic Escapes', data: romanceMovies, to: '/categories/10749' },
+  ];
 
-      {/* GLOSSY AMBIENT BACKGROUND
-          On low-end devices, large blur radii (100-120px) are extremely GPU
-          expensive and cause scroll jank. Skip the blur entirely and use a
-          plain low-opacity gradient instead. */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        {isLowEnd ? (
-          <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/5 rounded-full opacity-[0.18]" />
-        ) : (
-          <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-600/10 blur-[100px] md:blur-[120px] rounded-full mix-blend-plus-lighter opacity-[0.18]" />
+  return (
+    <div className="font-body text-white">
+      <Hero movies={trendingMovies} pending={loading} onPlay={handlePlay} onInfo={handleMovieSelect} label="Trending" />
+
+      <div className="relative z-10 -mt-6 md:-mt-10 space-y-10 md:space-y-12">
+        {user && <ContinueWatching user={user} onMovieClick={handleMovieSelect} />}
+        {rows.map((row) =>
+          row.data && row.data.length > 0 ? (
+            <MovieRow key={row.title} title={row.title} movies={row.data} onMovieClick={handleMovieSelect} to={row.to} ranked={row.ranked} />
+          ) : null
         )}
       </div>
-
-      <main className="relative z-10 flex-grow">
-        <AnimatePresence mode="wait">
-          {loading ? (
-            <Motion.div
-              key="loader"
-              initial={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
-              className="h-screen flex flex-col items-center justify-center bg-[#020202] fixed inset-0 z-[200]"
-            >
-              <div className="w-12 h-12 border-2 border-white/10 border-t-red-600 rounded-full animate-spin" />
-              <span className="mt-8 text-[8px] font-black uppercase tracking-[1.5em] text-white/30">Syncing Library</span>
-            </Motion.div>
-          ) : view === 'mylist' ? (
-            /* MY LIST VIEW */
-            <Motion.div
-              key="list"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: reducedMotion ? 0.12 : 0.2 }}
-            >
-              <MyList user={user} onMovieClick={handleMovieSelect} onBack={() => setView('home')} />
-            </Motion.div>
-          ) : (
-            /* HOME VIEW */
-            <Motion.div
-              key="home"
-              className="relative"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: reducedMotion ? 0.15 : 0.25 }}
-            >
-              <Hero
-                movies={trendingMovies}
-                onSearchClick={() => setIsSearchOpen(true)}
-                onPlay={handlePlay}
-                onInfo={handleMovieSelect}
-                lowEnd={isLowEnd}
-              />
-
-              <div className="relative mt-20 z-20 space-y-16 md:space-y-24 pb-40">
-                {user && (
-                  <Motion.div variants={rowReveal} initial="hidden" whileInView="visible" viewport={{ once: true }}>
-                    <ContinueWatching user={user} onMovieClick={handleMovieSelect} />
-                  </Motion.div>
-                )}
-
-                {[
-                  { title: "Global Trending", data: trendingMovies },
-                  { title: "Trending Series", data: trendingSeries },
-                  { title: "Top Rated Movies", data: topRatedMovies },
-                  { title: "Top Rated Series", data: topRatedSeries },
-                  { title: "Action Packed", data: actionMovies },
-                  { title: "Comedy Central", data: comedyMovies },
-                  { title: "Edge of Your Seat", data: thrillerMovies },
-                  { title: "Horror Essentials", data: horrorMovies },
-                  { title: "Bollywood Specials", data: bollywood },
-                  { title: "Bangla Movies", data: banglaMovies },
-                  { title: "Anime Series", data: animeSeries },
-                  { title: "Anime Movies", data: animeMovies },
-                  { title: "Romantic Escapes", data: romanceMovies }
-                ].map((row, i) => (
-                  // Skip empty rows entirely instead of rendering a MovieRow
-                  // with no data — avoids unnecessary DOM nodes / observers.
-                  row.data && row.data.length > 0 ? (
-                    <Motion.div
-                      key={i}
-                      variants={rowReveal}
-                      initial="hidden"
-                      whileInView="visible"
-                      viewport={{ once: true, margin: "100px" }}
-                    >
-                      <MovieRow title={row.title} movies={row.data} onMovieClick={handleMovieSelect} lazyImages />
-                    </Motion.div>
-                  ) : null
-                ))}
-              </div>
-            </Motion.div>
-          )}
-        </AnimatePresence>
-      </main>
-
-      {/* OVERLAYS */}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <Motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: reducedMotion ? 0.15 : 0.2 }}
-            className={`fixed inset-0 z-[150] bg-black/80 ${isLowEnd ? '' : 'backdrop-blur-md'}`}
-          >
-            <SearchPage
-              onClose={() => setIsSearchOpen(false)}
-              onMovieClick={handleMovieSelect}
-              openRouterApiKey={import.meta.env.VITE_OPENROUTER_API_KEY}
-            />
-          </Motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {playingMovie && (
           <Watch movie={playingMovie} user={user} onClose={() => setPlayingMovie(null)} />
         )}
       </AnimatePresence>
-
-      <Footer />
     </div>
   );
 };

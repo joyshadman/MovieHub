@@ -1,230 +1,127 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Sword, Zap, Ghost, Drama, Film, Heart, 
-  ChevronLeft, Loader2, Sparkles, Search, 
-  Music, Tv, Clapperboard 
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Sparkles } from 'lucide-react';
 import { movieApi } from '../services/movieApi';
-import MovieCard from '../components/MovieCard';
+import { CATEGORY_GENRES, TV_GENRE_MAP } from '../utils/genres';
+import { COLLECTIONS } from '../utils/collections';
+import Chip from '../components/ui/Chip';
+import SectionHeader from '../components/ui/SectionHeader';
 
-const genreList = [
-  { id: 'bollywood', name: 'Bollywood', icon: <Music size={24} />, color: 'from-orange-600/20' },
-  { id: 'bangla', name: 'Bangla', icon: <Music size={24} />, color: 'from-emerald-600/20' },
-  { id: 'anime', name: 'Anime', icon: <Sparkles size={24} />, color: 'from-fuchsia-600/20' },
-  { id: 28, name: 'Action', icon: <Sword size={24} />, color: 'from-red-600/20' },
-  { id: 878, name: 'Sci-Fi', icon: <Zap size={24} />, color: 'from-blue-600/20' },
-  { id: 27, name: 'Horror', icon: <Ghost size={24} />, color: 'from-purple-600/20' },
-  { id: 35, name: 'Comedy', icon: <Drama size={24} />, color: 'from-yellow-600/20' },
-  { id: 18, name: 'Drama', icon: <Film size={24} />, color: 'from-emerald-600/20' },
-  { id: 10749, name: 'Romance', icon: <Heart size={24} />, color: 'from-pink-600/20' },
-  { id: 16, name: 'Animation', icon: <Sparkles size={24} />, color: 'from-cyan-600/20' },
-  { id: 9648, name: 'Mystery', icon: <Search size={24} />, color: 'from-indigo-600/20' },
+const countCache = {};
+
+const TYPE_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'movie', label: 'Movies' },
+  { id: 'tv', label: 'TV Shows' },
 ];
 
-// Map movie genre IDs to closest matching TV genre IDs
-const tvGenreMap = {
-  28: 10759,   // Action -> Action & Adventure
-  878: 10765,  // Sci-Fi -> Sci-Fi & Fantasy
-  27: 9648,    // Horror -> Mystery (closest TV mood)
-  35: 35,      // Comedy -> Comedy
-  18: 18,      // Drama -> Drama
-  10749: 10766 // Romance -> Soap / Romance-style TV
-};
+// Decorative tilted "cards" from the Figma category and collection tiles.
+const TiltedCards = ({ colors, count = 1 }) => (
+  <div aria-hidden="true" className="absolute right-4 top-1/2 -translate-y-1/2 h-[85%] w-[45%]">
+    {Array.from({ length: count }).map((_, i) => (
+      <span
+        key={i}
+        className="absolute top-[8%] h-[84%] aspect-[2/3] rounded-card border border-white/15 shadow-card rotate-(--r) motion-safe:transition-[rotate,translate] duration-500 ease-out group-hover:rotate-(--r2) group-hover:[translate:var(--dx)_-6px]"
+        style={{
+          right: `${i * 18}%`,
+          // Cards fan out a little further when the tile is hovered.
+          '--r': `${10 - i * 6}deg`,
+          '--r2': `${(10 - i * 6) * 1.6 + 4}deg`,
+          '--dx': `${-i * 10 + 6}px`,
+          backgroundImage: `linear-gradient(160deg, ${colors[i % colors.length]}, #0a0a0f)`,
+          zIndex: count - i,
+        }}
+      />
+    ))}
+  </div>
+);
 
-const Categories = ({ user, onMovieClick }) => {
-  const [selectedGenre, setSelectedGenre] = useState(null);
-  const [mediaType, setMediaType] = useState('movie');
-  const [movies, setMovies] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  
-  const observer = useRef();
+// Figma "Categories": genre tiles with live title counts, plus curated (regional) collections.
+const Categories = () => {
+  const [typeFilter, setTypeFilter] = useState('all');
+  const countType = typeFilter === 'tv' ? 'tv' : 'movie';
+  const [countsByType, setCountsByType] = useState(() => ({ ...countCache }));
+  const counts = countsByType[countType] || {};
 
-  const fetchMovies = async (genre, pageNum, type, isInitial = false) => {
-    if (isLoading) return;
-    setIsLoading(true);
-    
-    try {
-      let data;
-      // Bollywood is strictly a Movie discover call in this API
-      if (genre.id === 'bollywood') {
-        data = await movieApi.getBollywood(pageNum);
-      } else if (genre.id === 'bangla') {
-        data = await movieApi.getBanglaMovies(pageNum);
-      } else if (genre.id === 'anime') {
-        data = await movieApi.getAnime(type, pageNum);
-      } else {
-        // For TV, remap numeric movie genre IDs to TV genre IDs when possible
-        const baseId = genre.id;
-        const tvId =
-          type === 'tv' && typeof baseId === 'number'
-            ? tvGenreMap[baseId] || baseId
-            : baseId;
-        data = await movieApi.getByGenre(tvId, type, pageNum);
-      }
-
-      const results = data?.results && Array.isArray(data.results) ? data.results : [];
-      
-      setMovies(prev => isInitial ? results : [...prev, ...results]);
-      
-      // Sync with both potential API return formats
-      const total = data?.totalPages || data?.total_pages || 1;
-      setHasMore(pageNum < total && results.length > 0);
-    } catch (error) {
-      console.error("API Error in Categories:", error);
-      if (isInitial) setMovies([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const lastMovieElementRef = useCallback(node => {
-    if (isLoading) return;
-    if (observer.current) observer.current.disconnect();
-    observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore) {
-        setPage(prevPage => prevPage + 1);
-      }
-    });
-    if (node) observer.current.observe(node);
-  }, [isLoading, hasMore]);
-
-  // Combined effect to handle initial genre load, pagination, and type switching
   useEffect(() => {
-    if (selectedGenre) {
-      fetchMovies(selectedGenre, page, mediaType, page === 1);
-    }
-  }, [selectedGenre, page, mediaType]);
+    let cancelled = false;
+    if (countCache[countType]) return undefined;
+    Promise.all(
+      CATEGORY_GENRES.map(async (g) => {
+        const gid = countType === 'tv' ? TV_GENRE_MAP[g.id] || g.id : g.id;
+        return [g.id, await movieApi.getGenreCount(gid, countType)];
+      })
+    ).then((pairs) => {
+      const map = Object.fromEntries(pairs);
+      countCache[countType] = map;
+      if (!cancelled) setCountsByType((prev) => ({ ...prev, [countType]: map }));
+    });
+    return () => { cancelled = true; };
+  }, [countType]);
 
-  const handleGenreSelect = (genre) => {
-    setMovies([]);
-    setPage(1);
-    setHasMore(true);
-    // If user switches to language-only categories, ensure type is movie
-    if (genre.id === 'bollywood' || genre.id === 'bangla') setMediaType('movie');
-    setSelectedGenre(genre);
-  };
-
-  const toggleMediaType = (type) => {
-    if (type === mediaType) return;
-    setMovies([]);
-    setPage(1);
-    setHasMore(true);
-    setMediaType(type);
-  };
+  const total = Object.values(counts).reduce((sum, n) => sum + (n || 0), 0);
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white pt-32 pb-20 px-6">
-      <AnimatePresence mode="wait">
-        {!selectedGenre ? (
-          <motion.div 
-            key="genres-grid"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="max-w-7xl mx-auto"
-          >
-            <div className="mb-16">
-              <h1 className="text-5xl md:text-7xl font-black italic uppercase tracking-tighter text-white">
-                BROWSE <span className="text-red-600">GENRES</span>
-              </h1>
-              <div className="h-1 w-20 bg-red-600 mt-4 shadow-[0_0_15px_#dc2626]" />
-            </div>
+    <div className="font-body text-white">
+      <section className="relative pt-28 md:pt-36 pb-10 px-4 md:px-8 lg:px-16 bg-[radial-gradient(ellipse_at_top_left,rgb(159_18_57/0.35),transparent_55%),radial-gradient(ellipse_at_top_right,rgb(91_33_182/0.3),transparent_50%)]">
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-bold">Browse Categories</h1>
+            <p className="mt-3 text-base md:text-lg text-muted">
+              Find your next favourite: {CATEGORY_GENRES.length} genres{total ? `, ${total.toLocaleString()}+ titles` : ''}.
+            </p>
+          </div>
+          <div role="group" aria-label="Show counts for" className="flex flex-wrap gap-2">
+            {TYPE_FILTERS.map((t) => (
+              <Chip key={t.id} selected={typeFilter === t.id} onClick={() => setTypeFilter(t.id)}>{t.label}</Chip>
+            ))}
+          </div>
+        </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-              {genreList.map((g, i) => (
-                <motion.div
-                  key={g.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.03 }}
-                  whileHover={{ scale: 1.05, y: -10 }}
-                  onClick={() => handleGenreSelect(g)}
-                  className="h-44 rounded-[2.5rem] bg-white/[0.03] border border-white/5 backdrop-blur-xl flex flex-col items-center justify-center gap-5 relative overflow-hidden group cursor-pointer shadow-2xl"
-                >
-                  <div className={`absolute inset-0 bg-gradient-to-br ${g.color} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
-                  <div className="text-red-600 relative z-10 group-hover:scale-125 transition-all duration-500">
-                    {g.icon}
-                  </div>
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] relative z-10 text-white/40 group-hover:text-white transition-colors">
-                    {g.name}
+        <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-5">
+          {CATEGORY_GENRES.map((g, i) => (
+            <li key={g.id} className="motion-safe:animate-rise" style={{ animationDelay: `${i * 40}ms` }}>
+              <Link
+                to={`/categories/${g.id}${typeFilter === 'tv' ? '?type=tv' : ''}`}
+                className="group relative flex h-32 md:h-40 items-end overflow-hidden rounded-panel border border-line p-4 md:p-5 motion-safe:transition-[transform,box-shadow,border-color] duration-300 ease-out motion-safe:hover:-translate-y-1 hover:border-line-strong hover:shadow-card"
+                style={{ backgroundImage: `linear-gradient(120deg, #0a0a0f 15%, ${g.from}cc 70%, ${g.to})` }}
+              >
+                <TiltedCards colors={[g.to, g.from]} />
+                <span className="relative z-10">
+                  <span className="block font-display text-display-md uppercase motion-safe:transition-transform motion-safe:group-hover:translate-x-1">{g.name}</span>
+                  <span className="block text-xs text-white/75 mt-1">
+                    {counts[g.id] == null ? <span className="inline-block h-3 w-16 rounded bg-white/15 motion-safe:animate-pulse align-middle" /> : `${counts[g.id] >= 20000 ? '20,000+' : counts[g.id].toLocaleString()} titles`}
                   </span>
-                </motion.div>
-              ))}
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div 
-            key="movies-view"
-            initial={{ opacity: 0, x: 50 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -50 }}
-            className="max-w-[1600px] mx-auto"
-          >
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-16">
-              <div className="flex items-center gap-6">
-                <motion.button 
-                  whileHover={{ scale: 1.1, backgroundColor: "#dc2626" }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => setSelectedGenre(null)}
-                  className="p-4 rounded-2xl bg-white/5 border border-white/10 transition-all"
-                >
-                  <ChevronLeft />
-                </motion.button>
-                <div>
-                  <h2 className="text-red-600 font-black uppercase tracking-widest text-xs opacity-50">Discovery Mode</h2>
-                  <h1 className="text-5xl font-black italic uppercase tracking-tighter">{selectedGenre.name}</h1>
-                </div>
-              </div>
-
-              {/* Glassy Type Switcher */}
-              {selectedGenre.id !== 'bollywood' && selectedGenre.id !== 'bangla' && (
-                <div className="flex bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-1.5 rounded-[2rem] self-start md:self-center">
-                  <button 
-                    onClick={() => toggleMediaType('movie')}
-                    className={`flex items-center gap-3 px-8 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${mediaType === 'movie' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-white/40 hover:text-white'}`}
-                  >
-                    <Clapperboard size={14} /> Movies
-                  </button>
-                  <button 
-                    onClick={() => toggleMediaType('tv')}
-                    className={`flex items-center gap-3 px-8 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${mediaType === 'tv' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-white/40 hover:text-white'}`}
-                  >
-                    <Tv size={14} /> Series
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8">
-              {movies.map((movie, index) => (
-                <div 
-                  key={`${movie.id}-${mediaType}-${index}`} // High-safety unique key
-                  ref={movies.length === index + 1 ? lastMovieElementRef : null}
-                >
-                  <MovieCard 
-                    movie={movie} 
-                    user={user} 
-                    onClick={() => onMovieClick(movie)} 
-                  />
-                </div>
-              ))}
-            </div>
-
-            {isLoading && (
-              <div className="flex flex-col items-center justify-center py-20">
-                <Loader2 className="w-12 h-12 text-red-600 animate-spin mb-4 opacity-40" />
-                <span className="text-[9px] font-black uppercase tracking-[0.5em] text-white/20 animate-pulse">
-                  Scanning {mediaType === 'movie' ? 'Cinema' : 'Broadcast'}
                 </span>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section aria-labelledby="collections-heading" className="px-4 md:px-8 lg:px-16 pt-6">
+        <SectionHeader id="collections-heading" title="Curated Collections" />
+        <ul className="grid gap-4 md:gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {COLLECTIONS.map((c, i) => (
+            <li key={c.slug} className="motion-safe:animate-rise" style={{ animationDelay: `${i * 60}ms` }}>
+              <Link
+                to={`/collection/${c.slug}`}
+                className="group relative flex h-48 md:h-52 overflow-hidden rounded-panel border border-line bg-card p-6 motion-safe:transition-[transform,box-shadow,border-color] duration-300 ease-out motion-safe:hover:-translate-y-1 hover:border-line-strong hover:shadow-card"
+                style={{ backgroundImage: `linear-gradient(110deg, #0f0f14 35%, ${c.colors[0]}99 85%, ${c.colors[1]})` }}
+              >
+                <TiltedCards colors={c.colors} count={3} />
+                <span className="relative z-10 max-w-[60%] self-center">
+                  <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] font-medium text-rating">
+                    <Sparkles size={13} aria-hidden="true" /> Collection
+                  </span>
+                  <span className="block mt-2 text-2xl md:text-3xl font-bold leading-tight">{c.title}</span>
+                  <span className="block mt-2 text-sm text-muted">{c.blurb}</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 };

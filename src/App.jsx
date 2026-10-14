@@ -1,35 +1,40 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { auth, db } from './components/firebase';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { auth } from './components/firebase';
+import { writePresence, markOffline, activityFor, getDeviceModel, HEARTBEAT_MS } from './services/presence';
 import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Toaster } from 'react-hot-toast';
 
 import LoadingScreen from './components/LoadingScreen';
 import Navbar from './components/Navbar';
 import DeviceModal from './components/DeviceModal';
+import Footer from './components/Footer';
+import { WatchlistProvider } from './context/WatchlistContext';
+import { Spinner } from './components/ui/feedback';
 
 const Home = lazy(() => import('./Pages/Home'));
 const SearchPage = lazy(() => import('./Pages/Search'));
 const MyList = lazy(() => import('./Pages/MyList'));
 const Categories = lazy(() => import('./Pages/Categories'));
+const CategoryPage = lazy(() => import('./Pages/CategoryPage'));
+const CollectionPage = lazy(() => import('./Pages/CollectionPage'));
+const BrowsePage = lazy(() => import('./Pages/BrowsePage'));
 const MovieDetails = lazy(() => import('./Pages/MovieDetails'));
 const About = lazy(() => import('./Pages/About'));
+const Login = lazy(() => import('./Pages/auth/Login'));
+const Signup = lazy(() => import('./Pages/auth/Signup'));
+const ForgotPassword = lazy(() => import('./Pages/auth/ForgotPassword'));
+const NotFound = lazy(() => import('./Pages/NotFound'));
 
-const getDeviceModel = () => {
-  const ua = navigator.userAgent;
-  if (/android/i.test(ua)) return "Android Device";
-  if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) return "iOS Device";
-  if (/Macintosh/.test(ua)) return "Mac";
-  if (/Windows/.test(ua)) return "Windows PC";
-  if (/Linux/.test(ua)) return "Linux PC";
-  return "Unknown Device";
-};
+const AUTH_PATHS = ['/login', '/signup', '/forgot-password'];
+
+// Signed in visitors have no reason to see the auth pages.
+const GuestOnly = ({ user, children }) => (user ? <Navigate to="/" replace /> : children);
 
 const RouteFallback = () => (
-  <div className="min-h-[50vh] flex flex-col items-center justify-center bg-[#050505] text-white gap-4 px-6">
-    <div className="h-9 w-9 border-2 border-white/15 border-t-red-600 rounded-full animate-spin" />
-    <p className="text-[9px] font-black uppercase tracking-[0.35em] text-white/35">Loading</p>
+  <div className="font-body min-h-[70vh] flex flex-col items-center justify-center bg-canvas text-white gap-4 px-6">
+    <Spinner size={36} />
+    <p className="text-[11px] uppercase tracking-[0.08em] font-medium text-muted">Loading</p>
   </div>
 );
 
@@ -45,24 +50,32 @@ const AppContent = ({ user, isAppReady }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Visitor tracker (src/services/presence.js): the current page on every route change,
+  // a heartbeat while the tab is visible, and offline when the tab is hidden or closed.
   useEffect(() => {
     if (!user || !isAppReady) return;
-
-    setDoc(
-      doc(db, "users", user.uid),
-      {
-        displayName: user.displayName || "Anonymous",
-        email: user.email || null,
-        photoURL: user.photoURL || null,
-        isOnline: true,
-        deviceModel: getDeviceModel(),
-        currentPage: location.pathname,
-        watching: `Browsing ${location.pathname}`,
-        lastActive: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch((err) => console.error("Page tracking error:", err));
+    writePresence(user, {
+      isOnline: true,
+      deviceModel: getDeviceModel(),
+      currentPage: location.pathname,
+      watching: activityFor(location.pathname),
+    });
   }, [user, location.pathname, isAppReady]);
+
+  useEffect(() => {
+    if (!user || !isAppReady) return undefined;
+    const beat = () => { if (!document.hidden) writePresence(user, { isOnline: true }); };
+    const timer = setInterval(beat, HEARTBEAT_MS);
+    const onVisibility = () => writePresence(user, { isOnline: !document.hidden });
+    const onPageHide = () => markOffline(user);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [user, isAppReady]);
 
   const handleMovieClick = (movie) => {
     if (!movie || !movie.id) return;
@@ -70,38 +83,48 @@ const AppContent = ({ user, isAppReady }) => {
     navigate(`/details/${type}/${movie.id}`);
   };
 
-  const handleWatchlistToggle = (movie) => {
-    console.log("Watchlist action for:", movie.title || movie.name);
-  };
+  const isAuthPage = AUTH_PATHS.includes(location.pathname);
+
+  // Keyed by path so every route change replays a soft fade in.
+  const routes = (
+    <div key={location.pathname} className="motion-safe:animate-page">
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/movies" element={<BrowsePage key="movie" type="movie" />} />
+        <Route path="/tv" element={<BrowsePage key="tv" type="tv" />} />
+        <Route path="/search" element={<SearchPage onMovieClick={handleMovieClick} />} />
+        <Route path="/mylist" element={<MyList user={user} onMovieClick={handleMovieClick} />} />
+        <Route path="/categories" element={<Categories />} />
+        <Route path="/categories/:genreId" element={<CategoryPage />} />
+        <Route path="/collection/:slug" element={<CollectionPage />} />
+        <Route path="/about" element={<About user={user} />} />
+        <Route path="/details/:type/:id" element={<MovieDetails />} />
+        <Route path="/movie/:id" element={<MovieDetails />} />
+        <Route path="/tv/:id" element={<MovieDetails />} />
+        <Route path="/login" element={<GuestOnly user={user}><Login /></GuestOnly>} />
+        <Route path="/signup" element={<GuestOnly user={user}><Signup /></GuestOnly>} />
+        <Route path="/forgot-password" element={<GuestOnly user={user}><ForgotPassword /></GuestOnly>} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Suspense>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white">
+    <div className="min-h-screen bg-canvas text-white font-body">
       <ScrollToTop />
-      <Navbar user={user} onMovieClick={handleMovieClick} />
-
-      <main>
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/" element={<Home user={user} onMovieClick={handleMovieClick} />} />
-            <Route path="/search" element={<SearchPage onMovieClick={handleMovieClick} />} />
-            <Route path="/mylist" element={<MyList user={user} onMovieClick={handleMovieClick} />} />
-            <Route path="/categories" element={<Categories onMovieClick={handleMovieClick} />} />
-            <Route path="/about" element={<About />} />
-            <Route
-              path="/details/:type/:id"
-              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
-            />
-            <Route
-              path="/movie/:id"
-              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
-            />
-            <Route
-              path="/tv/:id"
-              element={<MovieDetails user={user} onWatchlistToggle={handleWatchlistToggle} />}
-            />
-          </Routes>
-        </Suspense>
-      </main>
+      {isAuthPage ? (
+        routes
+      ) : (
+        <>
+          <Navbar user={user} />
+          <main id="main" className="pb-20 md:pb-0">
+            {routes}
+            <Footer />
+          </main>
+        </>
+      )}
     </div>
   );
 };
@@ -146,19 +169,25 @@ const App = () => {
       <DeviceModal isAppReady={isAppReady} />
 
       <Toaster
-        position="bottom-right"
+        position="bottom-center"
+        containerStyle={{ bottom: 88 }}
         toastOptions={{
           style: {
-            background: '#1a1a1a',
+            background: 'var(--color-sheet)',
             color: '#fff',
-            border: '1px solid rgba(255,255,255,0.1)',
-            fontSize: '12px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em'
-          }
+            border: '1px solid var(--color-line-strong)',
+            borderRadius: '12px',
+            fontFamily: 'var(--font-body)',
+            fontSize: '14px',
+            padding: '10px 14px',
+          },
+          success: { iconTheme: { primary: '#22c55e', secondary: '#fff' } },
+          error: { iconTheme: { primary: 'var(--color-accent)', secondary: '#fff' } },
         }}
       />
-      <AppContent user={user} isAppReady={isAppReady} />
+      <WatchlistProvider user={user}>
+        <AppContent user={user} isAppReady={isAppReady} />
+      </WatchlistProvider>
     </Router>
   );
 };

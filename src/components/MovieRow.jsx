@@ -1,26 +1,34 @@
 import React, { useRef, useState } from 'react';
-import { useReducedMotion } from 'framer-motion';
+import { motion as Motion, useReducedMotion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
+import SectionHeader from './ui/SectionHeader';
 
-const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
+// Row reveal: the header and cards rise in a quick stagger the first time the row scrolls into view.
+const ROW = { hidden: {}, show: { transition: { staggerChildren: 0.05, delayChildren: 0.05 } } };
+const CARD = {
+  hidden: { opacity: 0, y: 24 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] } },
+};
+
+// Figma home rows: section header, horizontally scrolling poster cards, arrow buttons on hover.
+// `ranked` renders the "Top 10" variant with large outlined numbers.
+const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, headerAction }) => {
   const rowRef = useRef(null);
+  const reducedMotion = useReducedMotion();
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartX, setDragStartX] = useState(0);
   const [dragScrollLeft, setDragScrollLeft] = useState(0);
   const [movement, setMovement] = useState(0);
-  const reducedMotion = useReducedMotion();
 
-  const safeMovies = Array.isArray(movies) ? movies : [];
+  const safeMovies = Array.isArray(movies) ? movies.filter(Boolean) : [];
 
   const handleMouseDown = (e) => {
     if (e.button !== 0) return;
-
     setIsDragging(true);
     setMovement(0);
     setDragStartX(e.pageX - rowRef.current.offsetLeft);
     setDragScrollLeft(rowRef.current.scrollLeft);
-
     document.body.style.userSelect = 'none';
     rowRef.current.style.scrollBehavior = 'auto';
   };
@@ -41,85 +49,86 @@ const MovieRow = ({ title, movies = [], onMovieClick, onAddToWatchlist }) => {
   };
 
   const scroll = (direction) => {
-    if (rowRef.current) {
-      const { scrollLeft, clientWidth } = rowRef.current;
-      const scrollTo =
-        direction === 'left'
-          ? scrollLeft - clientWidth * 0.7
-          : scrollLeft + clientWidth * 0.7;
-      rowRef.current.scrollTo({ left: scrollTo, behavior: 'smooth' });
-    }
+    if (!rowRef.current) return;
+    const { scrollLeft, clientWidth } = rowRef.current;
+    rowRef.current.scrollTo({
+      left: direction === 'left' ? scrollLeft - clientWidth * 0.8 : scrollLeft + clientWidth * 0.8,
+      behavior: 'smooth',
+    });
   };
 
   if (safeMovies.length === 0) return null;
-
-  const rowScaleClass =
-    !reducedMotion && isDragging ? 'scale-[0.995] transition-transform duration-150' : 'scale-100 transition-transform duration-150';
+  const headingId = `row-${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
   return (
-    <div className="group/row relative mb-12 px-6 md:px-14 select-none overflow-visible">
-      <div className="flex items-center justify-between mb-6">
-        <div className="relative">
-          <h2 className="text-xl md:text-2xl font-black italic uppercase tracking-tighter text-white/90">
-            {title}
-          </h2>
-          <div
-            className={`h-1 bg-red-600 rounded-full mt-1 shadow-[0_0_15px_#dc2626] ${reducedMotion ? 'w-10' : 'w-10 animate-none'}`}
-          />
-        </div>
+    <Motion.section
+      aria-labelledby={headingId}
+      className="group/row relative"
+      variants={ROW}
+      initial={reducedMotion ? false : 'hidden'}
+      whileInView="show"
+      viewport={{ once: true, amount: 0.15 }}
+    >
+      <Motion.div variants={CARD} className="px-4 md:px-8 lg:px-16">
+        <SectionHeader id={headingId} title={title} to={to} action={headerAction} />
+      </Motion.div>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => scroll('left')}
+          aria-label={`Scroll ${title} left`}
+          className="hidden md:flex absolute left-3 lg:left-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full glass text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
+        >
+          <ChevronLeft size={22} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={() => scroll('right')}
+          aria-label={`Scroll ${title} right`}
+          className="hidden md:flex absolute right-3 lg:right-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full glass text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
+        >
+          <ChevronRight size={22} aria-hidden="true" />
+        </button>
+
+        <ul
+          ref={rowRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={stopDragging}
+          onMouseLeave={stopDragging}
+          className="hide-scrollbar flex gap-3 md:gap-4 overflow-x-auto px-4 md:px-8 lg:px-16 pt-1 pb-4 cursor-grab active:cursor-grabbing scroll-smooth"
+        >
+          {safeMovies.map((movie, index) => (
+            <Motion.li
+              variants={index < 12 ? CARD : undefined}
+              key={`${movie.id}-${index}`}
+              className={`shrink-0 relative ${ranked ? 'flex items-end' : 'w-[128px] sm:w-[150px] lg:w-[184px]'}`}
+              onClickCapture={(e) => {
+                if (movement > 10) {
+                  e.stopPropagation();
+                  e.preventDefault();
+                }
+              }}
+            >
+              {ranked && (
+                <span
+                  aria-hidden="true"
+                  className="font-display leading-none text-[110px] sm:text-[140px] lg:text-[170px] -mr-4 sm:-mr-5 select-none"
+                  style={{ color: 'transparent', WebkitTextStroke: '2px rgb(255 255 255 / 0.55)' }}
+                >
+                  {index + 1}
+                </span>
+              )}
+              <div className={ranked ? 'relative w-[110px] sm:w-[130px] lg:w-[150px]' : ''}>
+                {ranked && <span className="sr-only">Number {index + 1}: </span>}
+                <MovieCard movie={movie} onClick={onMovieClick} />
+              </div>
+            </Motion.li>
+          ))}
+        </ul>
       </div>
-
-      <button
-        type="button"
-        onClick={() => scroll('left')}
-        className="absolute left-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-black/40 p-4 text-white opacity-0 backdrop-blur-md border border-white/10 transition-opacity hover:bg-red-600 group-hover/row:opacity-100 hidden md:flex items-center justify-center shadow-xl"
-      >
-        <ChevronLeft size={22} strokeWidth={3} />
-      </button>
-
-      <button
-        type="button"
-        onClick={() => scroll('right')}
-        className="absolute right-4 top-[45%] z-[70] -translate-y-1/2 rounded-full bg-black/40 p-4 text-white opacity-0 backdrop-blur-md border border-white/10 transition-opacity hover:bg-red-600 group-hover/row:opacity-100 hidden md:flex items-center justify-center shadow-xl"
-      >
-        <ChevronRight size={22} strokeWidth={3} />
-      </button>
-
-      <div
-        ref={rowRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={stopDragging}
-        onMouseLeave={stopDragging}
-        style={{
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-          WebkitOverflowScrolling: 'touch',
-        }}
-        className={`flex gap-5 overflow-x-auto pb-10 pt-2 cursor-grab active:cursor-grabbing [&::-webkit-scrollbar]:hidden ${rowScaleClass}`}
-      >
-        {safeMovies.map((movie) => (
-          <div
-            key={movie.id}
-            className="min-w-[130px] sm:min-w-[160px] md:min-w-[220px] lg:min-w-[260px] relative"
-            onClickCapture={(e) => {
-              if (movement > 10) {
-                e.stopPropagation();
-                e.preventDefault();
-              }
-            }}
-          >
-            {isDragging && movement > 10 && (
-              <div className="absolute inset-0 z-[100] cursor-grabbing bg-transparent" />
-            )}
-
-            <div className={movement > 10 ? 'pointer-events-none' : 'pointer-events-auto'}>
-              <MovieCard movie={movie} onClick={onMovieClick} onAddToWatchlist={onAddToWatchlist} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    </Motion.section>
   );
 };
 
