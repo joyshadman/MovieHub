@@ -139,7 +139,6 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [currentUser, setCurrentUser] = useState(user || null);
   const [autoSwitch, setAutoSwitch] = useState(true);
   const [failedSources, setFailedSources] = useState([]);
-  const [triedProviders, setTriedProviders] = useState([]);
   const [startAt, setStartAt] = useState(() => (isTV ? 0 : loadProgress({ id: movie.id, isTV })?.t || 0));
   const [volume, setVolume] = useState(readVolume);
   const [muted, setMuted] = useState(false);
@@ -177,22 +176,25 @@ const WatchPage = ({ movie, user, onClose }) => {
     });
   }, []);
 
-  // frameXTV failed to answer or found no stream: try two of its own servers first (keeps our
-  // controls), then fall back to a backup source.
-  const handleFrameXFail = useCallback((reason) => {
+  // frameXTV's page never answered at all: fall back to a backup source. (A slow or missing stream
+  // is left to frameXTV's own fallback pipeline; reloading it from here used to restart that chain.)
+  const handleFrameXFail = useCallback(() => {
     if (!autoSwitch) return;
-    const tried = [...triedProviders, providerId || 'auto'];
-    const nextProvider = reason === 'no-stream' && tried.length < 3 ? providers.find((p) => !tried.includes(p.id)) : null;
-    if (nextProvider) {
-      setTriedProviders(tried);
-      setProviderId(nextProvider.id);
-    } else {
-      setTriedProviders([]);
-      moveToNextSource('framex');
-    }
-  }, [autoSwitch, triedProviders, providerId, providers, moveToNextSource]);
+    moveToNextSource('framex');
+  }, [autoSwitch, moveToNextSource]);
 
-  const player = useFrameXPlayer({ frameRef, active: isFrameX, loadKey, onFail: handleFrameXFail });
+  // frameXTV loaded but reports no playback (its autoplay was blocked, common on phones, or it
+  // switched to its backup player, which does not report to us). Our controls cannot help then,
+  // so reload it with ITS OWN controls (like the official site) at the same point: its play button
+  // and its backup player become usable instead of hidden behind "Connecting".
+  const [handedOff, setHandedOff] = useState(false);
+  const handleFrameXSilent = useCallback(() => {
+    if (nativeControls) return;
+    setHandedOff(true);
+    setNativeControls(true);
+  }, [nativeControls]);
+
+  const player = useFrameXPlayer({ frameRef, active: isFrameX, loadKey, onFail: handleFrameXFail, onSilent: handleFrameXSilent });
 
   useEffect(() => {
     if (user) { setCurrentUser(user); return undefined; }
@@ -340,7 +342,6 @@ const WatchPage = ({ movie, user, onClose }) => {
     setNextUp(null);
     setBackupLoading(true);
     setShieldActive(true);
-    setTriedProviders([]);
     setPanel(null);
   }, [movie.id, isTV]);
 
@@ -383,7 +384,6 @@ const WatchPage = ({ movie, user, onClose }) => {
   const chooseProvider = (id) => {
     resumeHere();
     setProviderId(id);
-    setTriedProviders([]);
     setPanel(null);
   };
   const reload = () => {
@@ -573,7 +573,11 @@ const WatchPage = ({ movie, user, onClose }) => {
   const currentEp = episodesList.find((e) => e.episode_number === episode);
   const subtitle = isTV ? `S${season}:E${episode}${currentEp?.name ? ` · ${currentEp.name}` : ''}` : (movie.year || String(movie.release_date || '').slice(0, 4) || 'Movie');
   const serverName = isFrameX ? (providers.find((p) => p.id === providerId)?.name || 'Auto server') : source.name;
-  const loading = isFrameX ? !player.duration && !player.failed : backupLoading;
+  // With our controls, frameXTV stays hidden until it reports a stream (its own UI is off). With its
+  // own controls it is shown as soon as its page is up, exactly like the official site.
+  const loading = isFrameX
+    ? (custom ? !player.duration && !player.failed : !player.ready && !player.failed)
+    : backupLoading;
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const remaining = player.duration ? player.duration - player.currentTime : 0;
 
@@ -631,7 +635,8 @@ const WatchPage = ({ movie, user, onClose }) => {
           key={loadKey}
           title={`${title} video player`}
           src={iframeSrc}
-          className={`absolute inset-0 h-full w-full border-0 motion-safe:transition-opacity duration-700 ${loading ? 'opacity-0' : 'opacity-100'}`}
+          // When the embed shows its own controls, start it below our top bar so neither covers the other.
+          className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom ? 'top-0 h-full' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
           allowFullScreen
           referrerPolicy="origin"
@@ -666,7 +671,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         {loading && !player.failed && (
           <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 text-center px-6">
             <Spinner size={52} />
-            <p className="text-sm font-medium text-white/80">Connecting to {isFrameX ? `frameXTV · ${serverName}` : source.name}…</p>
+            <p className="text-sm font-medium text-white/80">Connecting to {isFrameX ? `MovieHub Server · ${serverName}` : source.name}…</p>
             {autoSwitch && <p className="text-xs text-white/45">If this stalls, we try another server automatically.</p>}
           </div>
         )}
@@ -723,9 +728,9 @@ const WatchPage = ({ movie, user, onClose }) => {
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-6">
             <div className="max-w-md text-center">
               <ServerCrash size={40} className="mx-auto text-accent-text" aria-hidden="true" />
-              <h2 className="mt-4 text-xl font-semibold">{player.failed === 'no-response' ? 'frameXTV did not respond' : 'No stream found on this server'}</h2>
+              <h2 className="mt-4 text-xl font-semibold">{player.failed === 'no-response' ? 'MovieHub Server did not respond' : 'No stream found on this server'}</h2>
               <p className="mt-2 text-sm text-white/60">
-                {autoSwitch ? 'Trying another server…' : 'Try another frameXTV server or a backup source.'}
+                {autoSwitch ? 'Trying another server…' : 'Try another MovieHub server or a backup source.'}
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-3">
                 <button type="button" onClick={reload} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RefreshCcw size={16} aria-hidden="true" /> Try again</button>
@@ -789,7 +794,9 @@ const WatchPage = ({ movie, user, onClose }) => {
           {!custom && (
             <p className="pointer-events-none mt-2 ml-14 text-[11px] text-white/45">
               {nativeControls
-                ? (ios ? 'frameXTV’s own controls (iPhone only plays with sound from them)' : 'frameXTV’s own controls')
+                ? (ios
+                  ? 'Built in player controls (iPhone only plays with sound from them)'
+                  : handedOff ? 'Switched to the built in player · tap play in the video if it waits' : 'Built in player controls')
                 : `${source.name} uses its own controls inside the video`}
               {!(ios && nativeControls) && (
                 <>

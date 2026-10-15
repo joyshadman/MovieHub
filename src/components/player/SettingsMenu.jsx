@@ -84,8 +84,8 @@ const SettingsMenu = ({
           <>
             {custom && providers.length > 0 && (
               <>
-                <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">frameXTV servers · {providers.length}</p>
-                <div role="menu" aria-label="frameXTV servers">
+                <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">MovieHub servers · {providers.length}</p>
+                <div role="menu" aria-label="MovieHub servers">
                   <Row active={!providerId} onClick={() => onProvider(null)} right={<Tag>Auto</Tag>}>Best available</Row>
                   {providers.map((p) => (
                     <Row key={p.id} active={providerId === p.id} onClick={() => onProvider(p.id)} right={p.tagline ? <Tag>{/4k/i.test(p.tagline) ? '4K' : 'HD'}</Tag> : null}>
@@ -129,11 +129,11 @@ const SettingsMenu = ({
               <Row active={!subtitlesOn} onClick={() => onSubtitles(false)}>Off</Row>
               <Row active={subtitlesOn} onClick={() => onSubtitles(true)}>On (stream default track)</Row>
               <button type="button" onClick={onNativeControls} className="mt-1 flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-white/80 hover:bg-white/[0.06]">
-                <span>More languages in the frameXTV menu</span>
+                <span>More languages in the player menu</span>
                 <ExternalLink size={14} className="text-white/40" aria-hidden="true" />
               </button>
               <p className="px-3 pt-2 pb-2 text-[11px] leading-5 text-white/40">
-                frameXTV lets us switch subtitles on and off. Picking a language happens in its own menu, which opens at your current time.
+                MovieHub Server lets us switch subtitles on and off. Picking a language happens in its own menu, which opens at your current time.
               </p>
             </div>
           ) : (

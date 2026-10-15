@@ -10,7 +10,7 @@ import { frameXEmbedUrl } from '../services/frameX';
 export const STREAM_SOURCES = [
   {
     id: 'framex',
-    name: 'frameXTV',
+    name: 'MovieHub Server',
     custom: true,
     url: ({ id, isTV, season, episode, start, provider, title, poster, nativeControls }) =>
       frameXEmbedUrl({ id, isTV, season, episode, start, provider, title, poster, customControls: !nativeControls }),

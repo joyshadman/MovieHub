@@ -26,10 +26,18 @@ export const frameXEmbedUrl = ({ id, isTV, season, episode, start = 0, provider,
   return `${FRAMEX_ORIGIN}${path}?${params}`;
 };
 
-// Only trust messages from frameXTV's origin AND from the iframe we created, with a known shape.
+// Trust a message only when it comes FROM THE IFRAME WE CREATED (event.source, the real guarantee:
+// no other window can be that object), from a framextv.xyz address (www. or other subdomains
+// included, in case it redirects), and with a known shape.
+const isFrameXOrigin = (origin) => {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return protocol === 'https:' && (hostname === 'framextv.xyz' || hostname.endsWith('.framextv.xyz'));
+  } catch { return false; }
+};
 export const readFrameXMessage = (event, frameWindow) => {
-  if (event.origin !== FRAMEX_ORIGIN) return null;
   if (!frameWindow || event.source !== frameWindow) return null;
+  if (!isFrameXOrigin(event.origin)) return null;
   let data = event.data;
   if (typeof data === 'string') {
     try { data = JSON.parse(data); } catch { return null; }
@@ -47,8 +55,10 @@ export const readFrameXMessage = (event, frameWindow) => {
   return null;
 };
 
+// Target '*' as in frameXTV's docs: commands carry no secrets, and a fixed target origin would
+// silently drop them if frameXTV answers from another address (www., a mirror).
 export const sendFrameX = (frameWindow, action, payload = {}) => {
-  frameWindow?.postMessage({ action, ...payload }, FRAMEX_ORIGIN);
+  frameWindow?.postMessage({ action, ...payload }, '*');
 };
 
 let providersRequest = null;

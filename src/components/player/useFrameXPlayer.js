@@ -3,7 +3,11 @@ import { readFrameXMessage, sendFrameX } from '../../services/frameX';
 
 const ADVANCE_WINDOW_MS = 1500; // time still moving within this window = playing
 const READY_TIMEOUT_MS = 15000; // no frameXTV:ready by then = the embed failed to load
-const STALL_TIMEOUT_MS = 25000; // ready, but no duration by then = no playable stream on this server
+// Ready, but no playback messages by then = frameXTV is showing something we cannot track. Its
+// 'Backup fallback iframe' (used when its own servers have no stream, which depends on the viewer's
+// network and country) relays events to ITSELF, not to us. The video does play, so the player stops
+// hiding the frame and hands control to it (see 'silent').
+const SILENT_MS = 8000;
 const STUCK_MS = 8000; // asked to play but time frozen this long = treat as paused (autoplay blocked, stopped in frame).
 // frameXTV cannot tell buffering from paused, so this is long enough to ride out a slow server.
 
@@ -11,16 +15,19 @@ const STUCK_MS = 8000; // asked to play but time frozen this long = treat as pau
 // frameXTV never says "playing" or "paused", so: playing = currentTime advanced recently;
 // buffering = we asked to play but time is not moving; stuck = frozen for STUCK_MS, so we show
 // a Play button again instead of spinning forever.
-export const useFrameXPlayer = ({ frameRef, active, loadKey, onFail }) => {
+export const useFrameXPlayer = ({ frameRef, active, loadKey, onFail, onSilent }) => {
   const [state, setState] = useState({ key: loadKey, ready: false, currentTime: 0, duration: 0, ended: false, failed: null });
   const [wantPlay, setWantPlay] = useState(true); // autoplay=1 is in the URL
   const [moving, setMoving] = useState(false);
   const [stuck, setStuck] = useState(false);
+  const [silentKey, setSilentKey] = useState(null);
   const since = useRef(0);
   const lastAdvance = useRef(0);
   const lastTime = useRef(0);
   const onFailRef = useRef(onFail);
   useEffect(() => { onFailRef.current = onFail; }, [onFail]);
+  const onSilentRef = useRef(onSilent);
+  useEffect(() => { onSilentRef.current = onSilent; }, [onSilent]);
 
   // New title, episode, server or reload: fresh state (adjusted during render, not in an effect).
   if (state.key !== loadKey) {
@@ -73,15 +80,22 @@ export const useFrameXPlayer = ({ frameRef, active, loadKey, onFail }) => {
     return () => { window.removeEventListener('message', onMessage); clearInterval(tick); };
   }, [active, loadKey, frameRef]);
 
-  // Failure watchdogs: the embed never answered, or answered but found no stream.
+  // Hard failure only: frameXTV's page never answered at all. A slow or missing stream is NOT a
+  // failure here: frameXTV switches its own servers and falls back to its backup player by itself,
+  // and reloading it from outside (what this used to do after 25 s) restarted that chain forever.
   useEffect(() => {
-    if (!active || state.duration > 0) return undefined;
-    const limit = state.ready ? STALL_TIMEOUT_MS : READY_TIMEOUT_MS;
-    const reason = state.ready ? 'no-stream' : 'no-response';
+    if (!active || state.ready || state.duration > 0) return undefined;
     const t = setTimeout(() => {
-      setState((s) => (s.duration > 0 ? s : { ...s, failed: reason }));
-      onFailRef.current?.(reason);
-    }, limit);
+      setState((s) => (s.ready || s.duration > 0 ? s : { ...s, failed: 'no-response' }));
+      onFailRef.current?.('no-response');
+    }, READY_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [active, loadKey, state.ready, state.duration]);
+
+  // Ready but silent: mark it so the page can reveal frameXTV and let its own controls work.
+  useEffect(() => {
+    if (!active || !state.ready || state.duration > 0) return undefined;
+    const t = setTimeout(() => { setSilentKey(loadKey); onSilentRef.current?.(); }, SILENT_MS);
     return () => clearTimeout(t);
   }, [active, loadKey, state.ready, state.duration]);
 
@@ -90,6 +104,8 @@ export const useFrameXPlayer = ({ frameRef, active, loadKey, onFail }) => {
   // On the render where loadKey changes, state still belongs to the previous video until the reset
   // above lands; never report its "ended" for the new one (it would chain a second countdown).
   const fresh = state.key === loadKey;
+  // Playback messages arriving again (duration known) always win over 'silent'.
+  const silent = fresh && silentKey === loadKey && !(state.duration > 0);
   const frozen = fresh && state.duration > 0 && wantPlay && stuck && !moving; // only once a stream exists
   const ended = fresh && (state.ended || (frozen && state.duration > 0 && state.currentTime >= state.duration - 6));
   const playing = moving && wantPlay;
@@ -108,5 +124,5 @@ export const useFrameXPlayer = ({ frameRef, active, loadKey, onFail }) => {
   }, [send, state.duration]);
   const seekBy = useCallback((seconds) => seek(state.currentTime + seconds), [seek, state.currentTime]);
 
-  return { ...state, ended, playing, paused, buffering, wantPlay, play, pause, toggle, seek, seekBy, send };
+  return { ...state, ended, silent, playing, paused, buffering, wantPlay, play, pause, toggle, seek, seekBy, send };
 };
