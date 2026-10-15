@@ -41,14 +41,18 @@ const SettingsMenu = ({
     { id: 'speed', label: 'Speed' },
   ];
 
+  // Runs once on open. onClose is read through a ref: if it ran again on every player re-render
+  // (several per second while playing) it would keep pulling focus back to the tab.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => {
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target) && !e.target.closest?.('[data-settings-toggle]')) onClose(); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target) && !e.target.closest?.('[data-settings-toggle]')) onCloseRef.current?.(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current?.(); } };
     document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey, true);
-    ref.current?.querySelector('[role="tab"][aria-selected="true"]')?.focus();
+    ref.current?.querySelector('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [onClose]);
+  }, []);
 
   return (
     <Motion.div

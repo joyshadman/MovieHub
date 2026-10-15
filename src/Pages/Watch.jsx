@@ -10,6 +10,7 @@ import { db, auth } from '../components/firebase';
 import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { writePresence, activityFor } from '../services/presence';
 import { STREAM_SOURCES } from '../config/streamSources';
+import { movieApi } from '../services/movieApi';
 import { fetchFrameXProviders, loadProgress, saveProgress } from '../services/frameX';
 import { useFrameXPlayer } from '../components/player/useFrameXPlayer';
 import SettingsMenu from '../components/player/SettingsMenu';
@@ -256,9 +257,8 @@ const WatchPage = ({ movie, user, onClose }) => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`https://api.themoviedb.org/3/tv/${movie.id}/season/${season}`, getOptions());
-        const data = await res.json();
-        if (!cancelled) setEpisodesList(data.episodes || []);
+        const eps = await movieApi.getSeason(movie.id, season);
+        if (!cancelled) setEpisodesList(eps);
       } catch (err) { console.error(err); }
     })();
     return () => { cancelled = true; };
@@ -304,6 +304,9 @@ const WatchPage = ({ movie, user, onClose }) => {
   // --- EPISODES ---
   const seasonCount = seasonsData.length;
   const hasNext = isTV && (episode < episodesList.length || season < seasonCount);
+
+  // Stable callbacks so the memoized episode panel does not re-render on every playback update.
+  const closePanel = useCallback(() => setPanel(null), []);
 
   const goToEpisode = useCallback((s, e) => {
     setSeason(s);
@@ -485,7 +488,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   const remaining = player.duration ? player.duration - player.currentTime : 0;
 
   const settingsProps = {
-    onClose: () => setPanel(null),
+    onClose: closePanel,
     sources: STREAM_SOURCES,
     sourceId,
     onSource: chooseSource,
@@ -751,13 +754,12 @@ const WatchPage = ({ movie, user, onClose }) => {
             <EpisodesPanel
               key="episodes"
               title={title}
+              tvId={movie.id}
               seasons={seasonsData}
-              season={season}
-              episodes={episodesList}
-              episode={episode}
-              onSeason={(s) => { setSeason(s); setEpisodesList([]); }}
-              onEpisode={(e) => goToEpisode(season, e)}
-              onClose={() => setPanel(null)}
+              playingSeason={season}
+              playingEpisode={episode}
+              onPick={goToEpisode}
+              onClose={closePanel}
             />
           )}
         </AnimatePresence>

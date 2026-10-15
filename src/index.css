@@ -100,6 +100,7 @@
   --animate-progress: ui-progress 8s linear both; /* hero slide timer */
   --animate-shine: ui-shine 0.9s var(--ease-premium); /* light sweep over a hovered card */
   --animate-glow: ui-glow 2.4s ease-in-out infinite; /* soft pulse behind live controls */
+  --animate-pop: ui-pop 0.3s var(--ease-premium) both; /* hover badge on poster cards */
 
   @keyframes ui-page {
     from { opacity: 0; }
@@ -120,6 +121,14 @@
   @keyframes ui-shine {
     from { transform: translateX(-150%) skewX(-20deg); }
     to { transform: translateX(350%) skewX(-20deg); }
+  }
+  @keyframes ui-eq {
+    0%, 100% { transform: scaleY(0.35); }
+    50% { transform: scaleY(1); }
+  }
+  @keyframes ui-pop {
+    from { opacity: 0; transform: scale(0.75); }
+    to { opacity: 1; transform: none; }
   }
   @keyframes ui-glow {
     0%, 100% { box-shadow: 0 0 0 0 rgb(225 29 72 / 0); }

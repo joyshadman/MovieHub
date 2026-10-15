@@ -56,6 +56,7 @@ const formatItem = (item, typeOverride = null) => {
 // Hover preview trailer keys, cached per title (a pending promise is cached too, so two quick
 // hovers on the same card share one request).
 const trailerCache = new Map();
+const seasonCache = new Map();
 
 export const movieApi = {
   // YouTube key of a title's trailer (teaser as fallback), or null.
@@ -381,6 +382,30 @@ export const movieApi = {
     } catch {
       return null;
     }
+  },
+
+  // One TV season's episodes, cached per show and season (the player and its episode panel share it).
+  getSeason: (tvId, season) => {
+    const key = `${tvId}:${season}`;
+    if (!seasonCache.has(key)) {
+      const request = fetch(`${BASE_URL}/tv/${tvId}/season/${season}`, getOptions())
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Season ${season} failed`))))
+        .then((data) => (data.episodes || []).map((ep) => ({
+          id: ep.id,
+          episode_number: ep.episode_number,
+          name: ep.name,
+          overview: ep.overview,
+          runtime: ep.runtime,
+          air_date: ep.air_date,
+          still_path: ep.still_path,
+        })))
+        .catch((err) => {
+          seasonCache.delete(key); // allow a retry later
+          throw err;
+        });
+      seasonCache.set(key, request);
+    }
+    return seasonCache.get(key);
   },
 
   getCredits: async (type, id) => {

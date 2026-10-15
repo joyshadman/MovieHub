@@ -16,8 +16,9 @@ const MovieCard = React.memo(({ movie, onClick, meta, showSave = true }) => {
   const title = movie.title || movie.name || 'Untitled';
 
   const posterUrl = useMemo(() => {
-    if (movie.poster_path) return `https://image.tmdb.org/t/p/w500${movie.poster_path}`;
-    return movie.image || null;
+    // Cards are at most ~184px wide: w342 is sharp on 2x screens and much lighter to decode than w500.
+    if (movie.poster_path) return `https://image.tmdb.org/t/p/w342${movie.poster_path}`;
+    return movie.image ? String(movie.image).replace('/t/p/w500/', '/t/p/w342/') : null;
   }, [movie.poster_path, movie.image]);
 
   const rating = useMemo(() => {
@@ -91,14 +92,15 @@ const MovieCard = React.memo(({ movie, onClick, meta, showSave = true }) => {
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
 
-        {/* Hover: light sweep and a play badge (fine pointers only, so touch taps stay clean). */}
-        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-[150%] motion-safe:pointer-fine:group-hover:animate-shine" />
-        <span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 h-12 w-12 rounded-full bg-accent/90 shadow-glow flex items-center justify-center opacity-0 scale-75 motion-safe:transition-all duration-300 ease-out pointer-fine:group-hover:opacity-100 pointer-fine:group-hover:scale-100">
+        {/* Hover: light sweep and a play badge (fine pointers only, so touch taps stay clean).
+            display:none until hover, so the ~270 cards on Home add no layers while scrolling. */}
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 hidden w-1/3 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-[150%] pointer-fine:group-hover:block motion-safe:pointer-fine:group-hover:animate-shine" />
+        <span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-[42%] -ml-6 -mt-6 hidden h-12 w-12 rounded-full bg-accent/90 shadow-glow items-center justify-center pointer-fine:group-hover:flex motion-safe:pointer-fine:group-hover:animate-pop">
           <Play size={18} className="ml-0.5 fill-white text-white" />
         </span>
 
         {rating && (
-          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-black/55 backdrop-blur-sm border border-line px-2 py-0.5">
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-black/70 border border-line px-2 py-0.5">
             <Star size={11} className="fill-rating text-rating" aria-hidden="true" />
             <span className="text-[11px] font-semibold text-white">{rating}</span>
           </div>
@@ -125,9 +127,9 @@ const MovieCard = React.memo(({ movie, onClick, meta, showSave = true }) => {
           disabled={busy}
           aria-label={saved ? `Remove ${title} from My List` : `Add ${title} to My List`}
           aria-pressed={!!saved}
-          className={`absolute top-2.5 left-2.5 z-10 h-8 w-8 rounded-full flex items-center justify-center border backdrop-blur-sm motion-safe:transition-all duration-200
+          className={`absolute top-2.5 left-2.5 z-10 h-8 w-8 rounded-full flex items-center justify-center border motion-safe:transition-[opacity,background-color,border-color] duration-200
             ${saved || busy ? 'opacity-100' : 'opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-visible:opacity-100'}
-            ${saved ? 'bg-accent border-accent text-white' : 'bg-black/55 border-line text-white hover:bg-accent hover:border-accent'}`}
+            ${saved ? 'bg-accent border-accent text-white' : 'bg-black/70 border-line text-white hover:bg-accent hover:border-accent'}`}
         >
           {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : saved ? <Check size={14} strokeWidth={3} aria-hidden="true" /> : <Plus size={14} strokeWidth={3} aria-hidden="true" />}
         </button>

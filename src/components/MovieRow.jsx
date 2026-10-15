@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { motion as Motion, useReducedMotion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
@@ -16,36 +16,42 @@ const CARD = {
 const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, headerAction }) => {
   const rowRef = useRef(null);
   const reducedMotion = useReducedMotion();
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStartX, setDragStartX] = useState(0);
-  const [dragScrollLeft, setDragScrollLeft] = useState(0);
-  const [movement, setMovement] = useState(0);
-
   const safeMovies = Array.isArray(movies) ? movies.filter(Boolean) : [];
+  // Mouse drag to scroll. Kept in refs, not state: a state update per mousemove re-rendered every
+  // card in the row and made dragging stutter. Touch and trackpads use native scrolling.
+  const drag = useRef({ active: false, startX: 0, startLeft: 0, moved: 0, frame: 0, x: 0 });
 
-  const handleMouseDown = (e) => {
-    if (e.button !== 0) return;
-    setIsDragging(true);
-    setMovement(0);
-    setDragStartX(e.pageX - rowRef.current.offsetLeft);
-    setDragScrollLeft(rowRef.current.scrollLeft);
-    document.body.style.userSelect = 'none';
-    rowRef.current.style.scrollBehavior = 'auto';
+  const handlePointerDown = (e) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    const d = drag.current;
+    d.active = true;
+    d.moved = 0;
+    d.startX = e.clientX;
+    d.x = e.clientX;
+    d.startLeft = rowRef.current.scrollLeft;
   };
 
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
-    const x = e.pageX - rowRef.current.offsetLeft;
-    const walk = (x - dragStartX) * 1.6;
-    setMovement((prev) => prev + Math.abs(e.movementX));
-    rowRef.current.scrollLeft = dragScrollLeft - walk;
+  const handlePointerMove = (e) => {
+    const d = drag.current;
+    if (!d.active) return;
+    d.x = e.clientX;
+    d.moved = Math.max(d.moved, Math.abs(d.x - d.startX));
+    if (d.moved > 4 && !rowRef.current.hasPointerCapture?.(e.pointerId)) {
+      rowRef.current.setPointerCapture?.(e.pointerId);
+      rowRef.current.style.userSelect = 'none';
+    }
+    if (d.frame) return;
+    d.frame = requestAnimationFrame(() => {
+      d.frame = 0;
+      if (rowRef.current) rowRef.current.scrollLeft = d.startLeft - (d.x - d.startX) * 1.4;
+    });
   };
 
   const stopDragging = () => {
-    if (!isDragging) return;
-    setTimeout(() => setIsDragging(false), 50);
-    document.body.style.userSelect = 'auto';
-    if (rowRef.current) rowRef.current.style.scrollBehavior = 'smooth';
+    const d = drag.current;
+    if (!d.active) return;
+    d.active = false;
+    if (rowRef.current) rowRef.current.style.userSelect = '';
   };
 
   const scroll = (direction) => {
@@ -63,7 +69,8 @@ const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, header
   return (
     <Motion.section
       aria-labelledby={headingId}
-      className="group/row relative"
+      // Rows off screen skip layout and paint until they come near the viewport.
+      className="group/row relative [content-visibility:auto] [contain-intrinsic-size:auto_320px]"
       variants={ROW}
       initial={reducedMotion ? false : 'hidden'}
       whileInView="show"
@@ -78,7 +85,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, header
           type="button"
           onClick={() => scroll('left')}
           aria-label={`Scroll ${title} left`}
-          className="hidden md:flex absolute left-3 lg:left-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full glass text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
+          className="hidden md:flex absolute left-3 lg:left-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full bg-black/60 border border-line text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
         >
           <ChevronLeft size={22} aria-hidden="true" />
         </button>
@@ -86,26 +93,33 @@ const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, header
           type="button"
           onClick={() => scroll('right')}
           aria-label={`Scroll ${title} right`}
-          className="hidden md:flex absolute right-3 lg:right-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full glass text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
+          className="hidden md:flex absolute right-3 lg:right-6 top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full bg-black/60 border border-line text-white opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-white/20 motion-safe:transition-opacity"
         >
           <ChevronRight size={22} aria-hidden="true" />
         </button>
 
         <ul
           ref={rowRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={stopDragging}
-          onMouseLeave={stopDragging}
-          className="hide-scrollbar flex gap-3 md:gap-4 overflow-x-auto px-4 md:px-8 lg:px-16 pt-1 pb-4 cursor-grab active:cursor-grabbing scroll-smooth"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={stopDragging}
+          onPointerCancel={stopDragging}
+          onLostPointerCapture={stopDragging}
+          onDragStart={(e) => e.preventDefault()}
+          className="hide-scrollbar flex gap-3 md:gap-4 overflow-x-auto overscroll-x-contain px-4 md:px-8 lg:px-16 pt-1 pb-4 pointer-fine:cursor-grab pointer-fine:active:cursor-grabbing"
         >
           {safeMovies.map((movie, index) => (
             <Motion.li
               variants={index < 12 ? CARD : undefined}
               key={`${movie.id}-${index}`}
-              className={`shrink-0 relative ${ranked ? 'flex items-end' : 'w-[128px] sm:w-[150px] lg:w-[184px]'}`}
+              // Cards scrolled out of view sideways skip paint (content-visibility). The placeholder
+              // size equals the real card size at each breakpoint (2:3 poster), so rows never jump.
+              className={`shrink-0 relative [content-visibility:auto] ${ranked
+                ? 'flex items-end [contain-intrinsic-size:auto_206px_auto_165px] sm:[contain-intrinsic-size:auto_255px_auto_195px] lg:[contain-intrinsic-size:auto_300px_auto_225px]'
+                : 'w-[128px] sm:w-[150px] lg:w-[184px] [contain-intrinsic-size:auto_128px_auto_192px] sm:[contain-intrinsic-size:auto_150px_auto_225px] lg:[contain-intrinsic-size:auto_184px_auto_276px]'}`}
               onClickCapture={(e) => {
-                if (movement > 10) {
+                if (drag.current.moved > 8) { // a drag, not a click
+                  drag.current.moved = 0;
                   e.stopPropagation();
                   e.preventDefault();
                 }
