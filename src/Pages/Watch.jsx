@@ -35,6 +35,19 @@ const readVolume = () => {
 
 const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
 
+// Phones: touch screen whose window's short side is at most 600 css px (tablets keep the normal
+// layout). The window, not window.screen: some browsers report the host screen there.
+const isPhone = () =>
+  typeof window !== 'undefined' &&
+  !!window.matchMedia?.('(pointer: coarse)').matches &&
+  Math.min(window.innerWidth, window.innerHeight) <= 600;
+// iPhone / iPad (iPadOS reports itself as a Mac with touch).
+const isIOS = () =>
+  typeof navigator !== 'undefined' &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+const isCoarse = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+const viewport = () => ({ w: window.innerWidth, h: window.innerHeight });
+
 // Control button for the dark player chrome.
 const Ctl = ({ label, onClick, children, className = '', active = false, ...rest }) => (
   <button
@@ -50,13 +63,15 @@ const Ctl = ({ label, onClick, children, className = '', active = false, ...rest
 );
 
 // Seek bar: click or drag, keyboard arrows, time preview on hover.
-const SeekBar = ({ current, duration, onSeek }) => {
+const SeekBar = ({ current, duration, onSeek, rotated = false }) => {
   const ref = useRef(null);
   const [hover, setHover] = useState(null);
   const [drag, setDrag] = useState(null);
-  const ratioAt = (clientX) => {
+  // In the rotated phone layout the bar runs top to bottom on the physical screen.
+  const ratioAt = (e) => {
     const r = ref.current.getBoundingClientRect();
-    return Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    const v = rotated ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
+    return Math.min(1, Math.max(0, v));
   };
   const shown = drag ?? (duration ? current / duration : 0);
   return (
@@ -69,9 +84,9 @@ const SeekBar = ({ current, duration, onSeek }) => {
       aria-valuemax={Math.round(duration) || 0}
       aria-valuenow={Math.round(current)}
       aria-valuetext={`${fmt(current)} of ${fmt(duration)}`}
-      onPointerDown={(e) => { if (!duration) return; e.currentTarget.setPointerCapture(e.pointerId); setDrag(ratioAt(e.clientX)); }}
-      onPointerMove={(e) => { const x = ratioAt(e.clientX); setHover(x); if (drag !== null) setDrag(x); }}
-      onPointerUp={(e) => { if (drag !== null) { onSeek(ratioAt(e.clientX) * duration); setDrag(null); } }}
+      onPointerDown={(e) => { if (!duration) return; e.currentTarget.setPointerCapture(e.pointerId); setDrag(ratioAt(e)); }}
+      onPointerMove={(e) => { const x = ratioAt(e); setHover(x); if (drag !== null) setDrag(x); }}
+      onPointerUp={(e) => { if (drag !== null) { onSeek(ratioAt(e) * duration); setDrag(null); } }}
       onPointerLeave={() => setHover(null)}
       onKeyDown={(e) => {
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); onSeek(current + (e.key === 'ArrowRight' ? 10 : -10)); }
@@ -106,7 +121,16 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [sourceId, setSourceId] = useState(STREAM_SOURCES[0].id);
   const [providerId, setProviderId] = useState(null);
   const [providers, setProviders] = useState([]);
-  const [nativeControls, setNativeControls] = useState(false);
+  const [phone] = useState(isPhone);
+  const [ios] = useState(isIOS);
+  const [touch] = useState(isCoarse);
+  // iPhone Safari only lets a video start with sound from a tap INSIDE its own frame, so on iOS
+  // frameXTV's own controls are the default (our messages from outside cannot start playback).
+  const [nativeControls, setNativeControls] = useState(isIOS);
+  // Phones open "immersive": real fullscreen + landscape lock where the browser allows it, and a
+  // CSS rotated landscape stage when it does not (iPhone) or the phone is held upright.
+  const [immersive, setImmersive] = useState(isPhone);
+  const [vp, setVp] = useState(viewport);
   const [reloadKey, setReloadKey] = useState(0);
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
@@ -130,6 +154,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [flash, setFlash] = useState(null);
 
   const stageRef = useRef(null);
+  const rootRef = useRef(null);
   const frameRef = useRef(null);
   const hideTimer = useRef(null);
 
@@ -406,25 +431,65 @@ const WatchPage = ({ movie, user, onClose }) => {
 
   // --- FULLSCREEN ---
   const canFullscreen = typeof document !== 'undefined' && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
-  const toggleFullscreen = async () => {
+  const enterRealFullscreen = async () => {
+    if (!canFullscreen || fullscreenElement()) return;
     try {
-      if (fullscreenElement()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-      else {
-        const el = stageRef.current;
-        await (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
-        await window.screen?.orientation?.lock?.('landscape').catch(() => {});
-      }
-    } catch { /* fullscreen refused (iframe policy or user gesture) */ }
+      const el = rootRef.current;
+      await (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' });
+      await window.screen?.orientation?.lock?.('landscape').catch(() => {});
+    } catch { /* refused: no user gesture, or not allowed. The CSS landscape covers phones. */ }
+  };
+  const exitRealFullscreen = async () => {
+    try { window.screen?.orientation?.unlock?.(); } catch { /* not supported */ }
+    if (fullscreenElement()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document).catch(() => {});
+  };
+  const toggleFullscreen = () => {
+    if (phone) {
+      if (immersive) { setImmersive(false); exitRealFullscreen(); }
+      else { setImmersive(true); enterRealFullscreen(); }
+      return;
+    }
+    if (fullscreenElement()) exitRealFullscreen();
+    else enterRealFullscreen();
   };
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!fullscreenElement());
+    const onChange = () => {
+      const fs = !!fullscreenElement();
+      setIsFullscreen(fs);
+      // Android back gesture / system exit leaves fullscreen: leave immersive too.
+      if (!fs && phone) setImmersive((was) => (was && canFullscreen ? false : was));
+    };
     document.addEventListener('fullscreenchange', onChange);
     document.addEventListener('webkitfullscreenchange', onChange);
     return () => {
       document.removeEventListener('fullscreenchange', onChange);
       document.removeEventListener('webkitfullscreenchange', onChange);
     };
+  }, [phone, canFullscreen]);
+
+  // Phones: go immersive as the player opens (the Play tap still counts as the user gesture).
+  useEffect(() => {
+    if (phone) enterRealFullscreen();
+    return () => { exitRealFullscreen(); };
   }, []);
+
+  useEffect(() => {
+    const onResize = () => setVp(viewport());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+
+  // Held upright in immersive mode: draw the player sideways so it is always landscape.
+  const rotated = phone && immersive && vp.h > vp.w;
+  const stageStyle = rotated
+    ? { position: 'absolute', top: 0, left: 0, width: vp.h, height: vp.w, transform: `translateX(${vp.w}px) rotate(90deg)`, transformOrigin: 'top left' }
+    : undefined;
+  const fullscreenOn = phone ? immersive : isFullscreen;
+  const showFullscreenButton = phone || canFullscreen;
 
   // --- CHROME AUTO HIDE ---
   const pinned = !!panel || !player.playing || nextUp !== null || !custom;
@@ -434,10 +499,35 @@ const WatchPage = ({ movie, user, onClose }) => {
     hideTimer.current = setTimeout(() => setShowUI(false), HIDE_UI_MS);
   }, []);
   useEffect(() => () => clearTimeout(hideTimer.current), []);
+  // Start the hide countdown when playback starts. On touch screens there is no mouse movement to
+  // start it, so without this the controls stayed on screen until the first tap.
+  useEffect(() => { if (player.playing) wake(); }, [player.playing, wake]);
   const uiVisible = showUI || pinned;
 
   const flashIcon = (name) => { setFlash({ name, id: Date.now() }); };
   const togglePlay = () => { flashIcon(player.paused ? 'play' : 'pause'); player.toggle(); };
+
+  // Touch: a tap shows or hides the controls (it never pauses by accident); a double tap on the
+  // left or right side jumps 10 seconds, like the Netflix and YouTube apps.
+  const lastTap = useRef({ t: 0, side: null });
+  const handleSurfaceTap = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (!touch) { togglePlay(); return; }
+    const w = e.currentTarget.clientWidth || 1;
+    const x = e.nativeEvent.offsetX;
+    const side = x < w * 0.35 ? 'back' : x > w * 0.65 ? 'fwd' : null;
+    const now = Date.now();
+    if (side && lastTap.current.side === side && now - lastTap.current.t < 320) {
+      flashIcon(side);
+      player.seekBy(side === 'fwd' ? 10 : -10);
+      lastTap.current = { t: 0, side: null };
+      wake();
+      return;
+    }
+    lastTap.current = { t: now, side };
+    if (showUI && !pinned) { clearTimeout(hideTimer.current); setShowUI(false); }
+    else wake();
+  };
 
   // --- KEYBOARD (Netflix style) ---
   useEffect(() => {
@@ -513,15 +603,18 @@ const WatchPage = ({ movie, user, onClose }) => {
       role="dialog"
       aria-modal="true"
       aria-label={`Watching ${title}`}
-      className="fixed inset-0 z-[500] bg-black font-body text-white"
+      ref={rootRef}
+      className="fixed inset-0 z-[500] overflow-hidden overscroll-none bg-black font-body text-white"
     >
       <Helmet><title>{`Watching ${title}`}</title></Helmet>
 
       <div
         ref={stageRef}
-        onPointerMove={wake}
-        onPointerDown={wake}
-        className={`relative h-full w-full overflow-hidden bg-black ${uiVisible || !custom ? '' : 'cursor-none'}`}
+        onPointerMove={touch ? undefined : wake}
+        onPointerDown={touch ? undefined : wake}
+        data-rotated={rotated || undefined}
+        style={stageStyle}
+        className={`@container relative h-full w-full overflow-hidden bg-black ${uiVisible || !custom ? '' : 'cursor-none'}`}
       >
         {/* Immersive backdrop while the stream connects */}
         <AnimatePresence>
@@ -563,8 +656,8 @@ const WatchPage = ({ movie, user, onClose }) => {
         {custom && !player.failed && (
           <div
             className="absolute inset-0 z-10"
-            onClick={(e) => { if (e.target === e.currentTarget) togglePlay(); }}
-            onDoubleClick={toggleFullscreen}
+            onClick={handleSurfaceTap}
+            onDoubleClick={touch ? undefined : toggleFullscreen}
             aria-hidden="true"
           />
         )}
@@ -603,8 +696,23 @@ const WatchPage = ({ movie, user, onClose }) => {
           )}
         </AnimatePresence>
 
-        {/* Paused: big center play */}
-        {custom && !loading && player.paused && !player.ended && !player.failed && nextUp === null && (
+        {/* Touch: Netflix style center row (back 10, play / pause, forward 10) while controls show */}
+        {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10">
+            <button type="button" onClick={() => { flashIcon('back'); player.seekBy(-10); wake(); }} aria-label="Back 10 seconds" className="pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform">
+              <RotateCcw size={28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
+            </button>
+            <button type="button" onClick={() => { togglePlay(); wake(); }} aria-label={player.paused ? 'Play' : 'Pause'} className="pointer-events-auto flex h-[72px] w-[72px] items-center justify-center rounded-full bg-white/15 ring-1 ring-white/25 active:scale-90 motion-safe:transition-transform">
+              {player.paused ? <Play size={34} className="ml-1 fill-white" aria-hidden="true" /> : <Pause size={34} className="fill-white" aria-hidden="true" />}
+            </button>
+            <button type="button" onClick={() => { flashIcon('fwd'); player.seekBy(10); wake(); }} aria-label="Forward 10 seconds" className="pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform">
+              <RotateCw size={28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
+            </button>
+          </div>
+        )}
+
+        {/* Paused: big center play (mouse / desktop) */}
+        {custom && !touch && !loading && player.paused && !player.ended && !player.failed && nextUp === null && (
           <button type="button" onClick={togglePlay} aria-label="Play" className="absolute left-1/2 top-1/2 z-20 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 backdrop-blur-md ring-1 ring-white/25 motion-safe:transition-transform hover:scale-110">
             <Play size={34} className="ml-1 fill-white" aria-hidden="true" />
           </button>
@@ -664,6 +772,11 @@ const WatchPage = ({ movie, user, onClose }) => {
                   {isTV && hasNext && <Ctl label="Next episode" onClick={handleNextEpisode}><SkipForward size={20} aria-hidden="true" /></Ctl>}
                   <Ctl label="Reload video" onClick={reload}><RefreshCcw size={18} aria-hidden="true" /></Ctl>
                   <Ctl label="Servers and settings" onClick={() => setPanel(panel === 'settings' ? null : 'settings')} active={panel === 'settings'} data-settings-toggle><Settings size={20} aria-hidden="true" /></Ctl>
+                  {showFullscreenButton && (
+                    <Ctl label={fullscreenOn ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
+                      {fullscreenOn ? <Minimize size={20} aria-hidden="true" /> : <Maximize size={20} aria-hidden="true" />}
+                    </Ctl>
+                  )}
                 </>
               )}
               {custom && (
@@ -675,8 +788,15 @@ const WatchPage = ({ movie, user, onClose }) => {
           </div>
           {!custom && (
             <p className="pointer-events-none mt-2 ml-14 text-[11px] text-white/45">
-              {nativeControls ? 'frameXTV’s own controls' : `${source.name} uses its own controls inside the video`} ·{' '}
-              <button type="button" onClick={() => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">back to our player</button>
+              {nativeControls
+                ? (ios ? 'frameXTV’s own controls (iPhone only plays with sound from them)' : 'frameXTV’s own controls')
+                : `${source.name} uses its own controls inside the video`}
+              {!(ios && nativeControls) && (
+                <>
+                  {' · '}
+                  <button type="button" onClick={() => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">back to our player</button>
+                </>
+              )}
             </p>
           )}
         </div>
@@ -685,7 +805,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         {custom && (
           <div className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 sm:px-6 pt-16 pb-3 sm:pb-5 motion-safe:transition-opacity duration-300 ${uiVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
             <div className="flex items-center gap-3">
-              <SeekBar current={player.currentTime} duration={player.duration} onSeek={(t) => { player.seek(t); wake(); }} />
+              <SeekBar rotated={rotated} current={player.currentTime} duration={player.duration} onSeek={(t) => { player.seek(t); wake(); }} />
               <span className="shrink-0 text-xs sm:text-sm font-medium tabular-nums text-white/80">{player.duration ? `-${fmt(remaining)}` : '--:--'}</span>
             </div>
             <div className="mt-1 flex items-center justify-between gap-1">
@@ -693,8 +813,12 @@ const WatchPage = ({ movie, user, onClose }) => {
                 <Ctl label={player.paused ? 'Play' : 'Pause'} onClick={togglePlay}>
                   {!player.paused ? <Pause size={26} className="fill-white" aria-hidden="true" /> : <Play size={26} className="ml-0.5 fill-white" aria-hidden="true" />}
                 </Ctl>
-                <Ctl label="Back 10 seconds" onClick={() => { flashIcon('back'); player.seekBy(-10); }}><RotateCcw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
-                <Ctl label="Forward 10 seconds" onClick={() => { flashIcon('fwd'); player.seekBy(10); }}><RotateCw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
+                {!touch && (
+                  <>
+                    <Ctl label="Back 10 seconds" onClick={() => { flashIcon('back'); player.seekBy(-10); }}><RotateCcw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
+                    <Ctl label="Forward 10 seconds" onClick={() => { flashIcon('fwd'); player.seekBy(10); }}><RotateCw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
+                  </>
+                )}
                 <div className="group/vol flex items-center">
                   <Ctl label={muted ? 'Unmute' : 'Mute'} onClick={toggleMute}><VolumeIcon size={24} aria-hidden="true" /></Ctl>
                   <label className="sr-only" htmlFor="player-volume">Volume</label>
@@ -724,24 +848,13 @@ const WatchPage = ({ movie, user, onClose }) => {
                   {subtitlesOn && <span className="absolute bottom-1.5 h-0.5 w-4 rounded-full bg-accent" aria-hidden="true" />}
                 </Ctl>
                 <Ctl label="Servers and settings" onClick={() => setPanel(panel === 'settings' ? null : 'settings')} active={panel === 'settings'} data-settings-toggle><Settings size={22} aria-hidden="true" /></Ctl>
-                {canFullscreen && (
-                  <Ctl label={isFullscreen ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
-                    {isFullscreen ? <Minimize size={22} aria-hidden="true" /> : <Maximize size={22} aria-hidden="true" />}
+                {showFullscreenButton && (
+                  <Ctl label={fullscreenOn ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
+                    {fullscreenOn ? <Minimize size={22} aria-hidden="true" /> : <Maximize size={22} aria-hidden="true" />}
                   </Ctl>
                 )}
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Fullscreen for backup sources (their own fullscreen button also works) */}
-        {!custom && canFullscreen && (
-          <div className={`pointer-events-none absolute bottom-3 right-3 z-30 motion-safe:transition-opacity ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
-            <span className="pointer-events-auto inline-flex rounded-full bg-black/50 backdrop-blur-md">
-              <Ctl label={isFullscreen ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
-                {isFullscreen ? <Minimize size={20} aria-hidden="true" /> : <Maximize size={20} aria-hidden="true" />}
-              </Ctl>
-            </span>
           </div>
         )}
 

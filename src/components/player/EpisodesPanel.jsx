@@ -95,7 +95,7 @@ const EpisodesPanel = ({ tvId, title, seasons, playingSeason, playingEpisode, on
         animate={reduce ? { opacity: 1 } : { x: 0 }}
         exit={reduce ? { opacity: 0 } : { x: '100%' }}
         transition={{ type: 'tween', duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute inset-y-0 right-0 z-50 flex w-full sm:w-[440px] flex-col border-l border-white/10 bg-[#0c0c11] font-body outline-none shadow-[-30px_0_60px_-20px_rgb(0_0_0/0.8)]"
+        className="absolute inset-y-0 right-0 z-50 flex w-full @min-[560px]:w-[440px] flex-col border-l border-white/10 bg-[#0c0c11] font-body outline-none shadow-[-30px_0_60px_-20px_rgb(0_0_0/0.8)]"
         onPointerDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
