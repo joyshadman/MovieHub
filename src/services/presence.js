@@ -17,6 +17,34 @@ export const getDeviceModel = () => {
   return 'Unknown Device';
 };
 
+export const getBrowser = () => {
+  const ua = navigator.userAgent;
+  if (navigator.brave) return 'Brave';
+  if (/Edg\//.test(ua)) return 'Edge';
+  if (/OPR\/|Opera/.test(ua)) return 'Opera';
+  if (/SamsungBrowser/.test(ua)) return 'Samsung Internet';
+  if (/Firefox\/|FxiOS/.test(ua)) return 'Firefox';
+  if (/Chrome\/|CriOS/.test(ua)) return 'Chrome';
+  if (/Safari\//.test(ua)) return 'Safari';
+  return 'Other browser';
+};
+
+// Public IP address of this visitor, looked up once per tab session (ipify: free, no key, CORS open).
+// Shown only in the owner's tracker on the About page.
+const IP_KEY = 'mh:ip';
+export const getIpAddress = async () => {
+  try {
+    const cached = sessionStorage.getItem(IP_KEY);
+    if (cached) return cached;
+  } catch { /* storage blocked: look it up */ }
+  try {
+    const res = await fetch('https://api.ipify.org?format=json');
+    const ip = res.ok ? (await res.json())?.ip : null;
+    if (ip) { try { sessionStorage.setItem(IP_KEY, ip); } catch { /* ignore */ } }
+    return ip || null;
+  } catch { return null; }
+};
+
 // Readable activity for a route, shown in the admin panel.
 export const activityFor = (pathname = '/') => {
   if (pathname === '/') return 'Browsing Home';

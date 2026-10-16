@@ -1,7 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { auth } from './components/firebase';
-import { writePresence, markOffline, activityFor, getDeviceModel, HEARTBEAT_MS } from './services/presence';
+import { writePresence, markOffline, activityFor, getDeviceModel, getBrowser, getIpAddress, HEARTBEAT_MS } from './services/presence';
 import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
 import { Toaster } from 'react-hot-toast';
 
@@ -57,10 +57,19 @@ const AppContent = ({ user, isAppReady }) => {
     writePresence(user, {
       isOnline: true,
       deviceModel: getDeviceModel(),
+      browser: getBrowser(),
       currentPage: location.pathname,
       watching: activityFor(location.pathname),
     });
   }, [user, location.pathname, isAppReady]);
+
+  // IP address for the owner's tracker: once per sign in and tab session.
+  useEffect(() => {
+    if (!user || !isAppReady) return undefined;
+    let cancelled = false;
+    getIpAddress().then((ip) => { if (ip && !cancelled) writePresence(user, { ip }); });
+    return () => { cancelled = true; };
+  }, [user, isAppReady]);
 
   useEffect(() => {
     if (!user || !isAppReady) return undefined;
