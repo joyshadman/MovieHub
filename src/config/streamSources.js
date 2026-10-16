@@ -4,7 +4,7 @@ import { frameXEmbedUrl } from '../services/frameX';
 // - frameXTV is the main source. With controls=0 it hides its own UI and our player drives it
 //   through its postMessage API (services/frameX.js). It also has many servers of its own.
 // - The backups are plain embeds: they show THEIR OWN controls inside the frame, and the app can
-//   only choose which page to load. Used when frameXTV cannot play a title.
+//   only choose which page to load. Never picked automatically; only by hand in Settings.
 // Checked 2026-10-15: frameXTV, VidLink and VidSrc load. vidsrc.cc (522), vidsrc.xyz, embed.su and
 // player.autoembed.cc were down or gone and were removed.
 export const STREAM_SOURCES = [
@@ -12,8 +12,8 @@ export const STREAM_SOURCES = [
     id: 'framex',
     name: 'MovieHub Server',
     custom: true,
-    url: ({ id, isTV, season, episode, start, provider, title, poster, nativeControls }) =>
-      frameXEmbedUrl({ id, isTV, season, episode, start, provider, title, poster, customControls: !nativeControls }),
+    url: ({ id, isTV, season, episode, start, provider, title, poster }) =>
+      frameXEmbedUrl({ id, isTV, season, episode, start, provider, title, poster }),
   },
   {
     id: 'vidlink',

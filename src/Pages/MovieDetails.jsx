@@ -84,6 +84,7 @@ const MovieDetails = () => {
   const reducedMotion = useReducedMotion();
 
   const type = location.pathname.includes('/tv/') ? 'tv' : 'movie';
+  const coarsePointer = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
   useEffect(() => {
     // Sync auth state to pass to WatchPage
@@ -210,7 +211,10 @@ const MovieDetails = () => {
       {/* HERO: full bleed muted trailer preview with a sound toggle, centered title art */}
       <section aria-label={`${movie.title} preview`} className="relative flex h-[86svh] min-h-[560px] max-h-[980px] items-end overflow-hidden">
         <TrailerBackdrop
-          videoKey={trailer?.key}
+          // Touch screens: drop the trailer's YouTube frame while the player covers it. Phones play
+          // the first tap inside the player's own frame, and a second video frame under it only
+          // costs data and battery there.
+          videoKey={showPlayer && coarsePointer ? null : trailer?.key}
           image={backdropUrl}
           fallbackStyle={{ backgroundImage: fallbackGradient(movie.id) }}
           paused={showPlayer || !!video}

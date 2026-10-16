@@ -6,20 +6,26 @@ import {
   SkipForward, ListVideo, Captions, Settings, ServerCrash, RefreshCcw, AlertTriangle,
 } from 'lucide-react';
 import { Helmet } from 'react-helmet';
+import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../components/firebase';
 import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { writePresence, activityFor } from '../services/presence';
 import { STREAM_SOURCES } from '../config/streamSources';
 import { movieApi } from '../services/movieApi';
-import { fetchFrameXProviders, loadProgress, saveProgress } from '../services/frameX';
+import { fetchFrameXProviders, fetchFrameXSubtitles, loadProgress, saveProgress } from '../services/frameX';
+import { loadSubPrefs, saveSubPrefs, loadSubtitleCues, pickTrack } from '../services/subtitles';
 import { useFrameXPlayer } from '../components/player/useFrameXPlayer';
 import SettingsMenu from '../components/player/SettingsMenu';
 import EpisodesPanel from '../components/player/EpisodesPanel';
+import MobileWatchDetails from '../components/player/MobileWatchDetails';
+import SubtitleOverlay from '../components/player/SubtitleOverlay';
 import { Spinner } from '../components/ui/feedback';
 
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
 const NEXT_UP_SECONDS = 8;
+// After a tap or click on the video, how long playback gets to start before we try another server.
+const TAP_START_MS = 6000;
 
 const fmt = (sec) => {
   if (!Number.isFinite(sec) || sec < 0) sec = 0;
@@ -47,6 +53,18 @@ const isIOS = () =>
   (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 const isCoarse = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 const viewport = () => ({ w: window.innerWidth, h: window.innerHeight });
+
+// 25 ms of silence. One unmuted play() of it tells whether this browser starts media with sound
+// without a tap; frameXTV's iframe gets the same answer (it is allowed autoplay by the page).
+const SILENT_WAV = 'data:audio/wav;base64,UklGRuwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YcgAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+const probeAutoplay = () => {
+  try {
+    const a = new Audio(SILENT_WAV);
+    const p = a.play();
+    if (!p) return Promise.resolve(true);
+    return p.then(() => { a.pause(); return true; }, (err) => err?.name !== 'NotAllowedError');
+  } catch { return Promise.resolve(true); }
+};
 
 // Control button for the dark player chrome.
 const Ctl = ({ label, onClick, children, className = '', active = false, ...rest }) => (
@@ -113,7 +131,8 @@ const SeekBar = ({ current, duration, onSeek, rotated = false }) => {
 };
 
 // Full screen Netflix style player. frameXTV is driven through its postMessage API with our own
-// controls; backup sources keep their own controls inside the iframe (see config/streamSources.js).
+// controls, always: its own player UI is never shown (no controls handoff). Subtitles are ours too.
+// Backup sources keep their own controls and are only used when picked by hand in Settings.
 const WatchPage = ({ movie, user, onClose }) => {
   const isTV = movie.type === 'tv' || !!movie.first_air_date;
   const title = movie.title || movie.name;
@@ -124,12 +143,10 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [phone] = useState(isPhone);
   const [ios] = useState(isIOS);
   const [touch] = useState(isCoarse);
-  // iPhone Safari only lets a video start with sound from a tap INSIDE its own frame, so on iOS
-  // frameXTV's own controls are the default (our messages from outside cannot start playback).
-  const [nativeControls, setNativeControls] = useState(isIOS);
-  // Phones open "immersive": real fullscreen + landscape lock where the browser allows it, and a
-  // CSS rotated landscape stage when it does not (iPhone) or the phone is held upright.
-  const [immersive, setImmersive] = useState(isPhone);
+  // Phones open inline (player on top, details below). Full screen ("immersive") is real fullscreen +
+  // landscape lock where the browser allows it, and a CSS rotated landscape stage when it does not
+  // (iPhone) or the phone is held upright.
+  const [immersive, setImmersive] = useState(false);
   const [vp, setVp] = useState(viewport);
   const [reloadKey, setReloadKey] = useState(0);
   const [season, setSeason] = useState(1);
@@ -143,8 +160,13 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [volume, setVolume] = useState(readVolume);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [subtitlesOn, setSubtitlesOn] = useState(false);
-  const [panel, setPanel] = useState(null); // 'episodes' | 'settings' | null
+  // Subtitles (ours): tracks for this episode, the chosen file, its cues, the viewer's style and offset.
+  const [subTracks, setSubTracks] = useState({ key: null, list: [], status: 'idle' });
+  const [subUrl, setSubUrl] = useState(null);
+  const [subCues, setSubCues] = useState({ url: null, cues: [] });
+  const [subPrefs, setSubPrefs] = useState(loadSubPrefs);
+  const [subOffset, setSubOffset] = useState(0);
+  const [panel, setPanel] = useState(null); // 'episodes' | 'settings' | 'subtitles' | null
   const [showUI, setShowUI] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [backupLoading, setBackupLoading] = useState(true);
@@ -159,41 +181,35 @@ const WatchPage = ({ movie, user, onClose }) => {
 
   const source = STREAM_SOURCES.find((s) => s.id === sourceId) || STREAM_SOURCES[0];
   const isFrameX = source.id === 'framex';
-  const custom = isFrameX && !nativeControls;
-  const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}|${nativeControls}`;
+  const custom = isFrameX;
+  const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}`;
+  const episodeKey = `${season}|${episode}|${reloadKey}`;
   const poster = movie.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}` : (movie.backdrop ? String(movie.backdrop).replace('/t/p/original', '/t/p/w1280') : null);
   const progressRef = { id: movie.id, isTV, season, episode };
 
-  // --- SOURCE FALLBACK ---
-  const moveToNextSource = useCallback((failedId) => {
-    setFailedSources((prev) => {
-      const updated = [...new Set([...prev, failedId])];
-      const next = STREAM_SOURCES.find((s) => !updated.includes(s.id));
-      setSourceId(next ? next.id : STREAM_SOURCES[0].id);
-      setBackupLoading(true);
-      setShieldActive(true);
-      return next ? updated : [];
-    });
-  }, []);
+  // --- SERVER ROTATION ---
+  // A frameXTV server that never answers, or answers but sends nothing we can track (it then plays
+  // inside its own backup player, which we never show), is skipped: we load the next MovieHub server
+  // at the same point. Once every server was tried, an error screen offers Try again / Choose server.
+  const [tried, setTried] = useState({ key: null, ids: [] });
+  const [exhaustedKey, setExhaustedKey] = useState(null);
+  const [noStreamKey, setNoStreamKey] = useState(null);
+  const exhausted = exhaustedKey === episodeKey;
+  const rotateRef = useRef(() => {});
+  rotateRef.current = () => {
+    if (!isFrameX) return;
+    if (!autoSwitch || exhausted) { setNoStreamKey(loadKey); return; }
+    const done = [...new Set([...(tried.key === episodeKey ? tried.ids : []), providerId])];
+    const next = [null, ...providers.map((p) => p.id)].find((id) => !done.includes(id));
+    setTried({ key: episodeKey, ids: done });
+    if (next === undefined) { setExhaustedKey(episodeKey); setNoStreamKey(loadKey); return; }
+    setProviderId(next);
+  };
+  const handleFrameXFail = useCallback(() => rotateRef.current(), []);
 
-  // frameXTV's page never answered at all: fall back to a backup source. (A slow or missing stream
-  // is left to frameXTV's own fallback pipeline; reloading it from here used to restart that chain.)
-  const handleFrameXFail = useCallback(() => {
-    if (!autoSwitch) return;
-    moveToNextSource('framex');
-  }, [autoSwitch, moveToNextSource]);
-
-  // frameXTV loaded but reports no playback (its autoplay was blocked, common on phones, or it
-  // switched to its backup player, which does not report to us). Our controls cannot help then,
-  // so reload it with ITS OWN controls (like the official site) at the same point: its play button
-  // and its backup player become usable instead of hidden behind "Connecting".
-  const [handedOff, setHandedOff] = useState(false);
-  const handleFrameXSilent = useCallback(() => {
-    if (nativeControls) return;
-    setHandedOff(true);
-    setNativeControls(true);
-  }, [nativeControls]);
-
+  // Ready but silent: blocked autoplay gets a click to play (below); anything else, another server.
+  const likelyBlockedRef = useRef(false);
+  const handleFrameXSilent = useCallback(() => { if (!likelyBlockedRef.current) rotateRef.current(); }, []);
   const player = useFrameXPlayer({ frameRef, active: isFrameX, loadKey, onFail: handleFrameXFail, onSilent: handleFrameXSilent });
 
   useEffect(() => {
@@ -313,7 +329,6 @@ const WatchPage = ({ movie, user, onClose }) => {
     player.send('setVolume', { volume });
     if (muted) player.send('mute');
     if (speed !== 1) player.send('setSpeed', { speed });
-    if (subtitlesOn) player.send('setSubtitle', { index: 0 });
   }, [custom, player.ready, loadKey]);
 
   const progressBucket = Math.floor(player.currentTime / 5);
@@ -321,10 +336,13 @@ const WatchPage = ({ movie, user, onClose }) => {
     if (isFrameX && player.currentTime > 0) saveProgress(progressRef, player.currentTime, player.duration);
   }, [progressBucket]);
 
-  // --- BACKUP SOURCES: their iframe must load within BACKUP_TIMEOUT_MS ---
+  // --- BACKUP SOURCES: their iframe must load within BACKUP_TIMEOUT_MS, else back to our player ---
   useEffect(() => {
     if (isFrameX || !autoSwitch || !backupLoading) return undefined;
-    const t = setTimeout(() => moveToNextSource(sourceId), BACKUP_TIMEOUT_MS);
+    const t = setTimeout(() => {
+      setFailedSources((prev) => [...new Set([...prev, sourceId])]);
+      setSourceId('framex');
+    }, BACKUP_TIMEOUT_MS);
     return () => clearTimeout(t);
   }, [isFrameX, autoSwitch, backupLoading, loadKey]);
 
@@ -369,6 +387,89 @@ const WatchPage = ({ movie, user, onClose }) => {
     return () => clearTimeout(t);
   }, [nextUp]);
 
+  // --- CLICK / TAP TO PLAY ---
+  // Browsers can block video with sound until a click or tap INSIDE the frame that plays it (iPhone
+  // always, Brave on Android by default). frameXTV's own autoplay then just waits, and our messages
+  // cannot unlock it. So while this load has never played, our layer steps aside: the frame shows and
+  // the click lands on frameXTV's video (its click handler starts playback with sound). From then on
+  // our controls drive it as usual. Nothing of frameXTV's own player UI is visible (controls=0).
+  const [autoplayBlocked, setAutoplayBlocked] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    probeAutoplay().then((ok) => { if (!cancelled) setAutoplayBlocked(!ok); });
+    return () => { cancelled = true; };
+  }, []);
+  likelyBlockedRef.current = ios || autoplayBlocked === true;
+  const [playedKey, setPlayedKey] = useState(null);
+  if (player.playing && playedKey !== loadKey) setPlayedKey(loadKey);
+  const [tapKey, setTapKey] = useState(null); // a click reached the frame for this load
+  const noStream = noStreamKey === loadKey;
+  const blocked = (player.ready && !player.playing && likelyBlockedRef.current)
+    || (player.duration > 0 && player.paused);
+  const frameTaps = custom && playedKey !== loadKey && !player.failed && !noStream && !player.ended && nextUp === null && blocked;
+  const tapStarting = frameTaps && tapKey === loadKey;
+  // A click inside a cross origin frame moves focus into it: the page gets "blur" and the iframe
+  // becomes the active element. That is how we know it happened (to show a spinner while it starts).
+  useEffect(() => {
+    if (!frameTaps || tapKey === loadKey) return undefined;
+    const onBlur = () => setTimeout(() => { if (document.activeElement === frameRef.current) setTapKey(loadKey); }, 0);
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [frameTaps, tapKey, loadKey]);
+  // Still nothing after the click: this server plays something we cannot track. Next server.
+  useEffect(() => {
+    if (tapKey !== loadKey || playedKey === loadKey) return undefined;
+    const t = setTimeout(() => rotateRef.current(), TAP_START_MS);
+    return () => clearTimeout(t);
+  }, [tapKey, playedKey, loadKey]);
+  // Keyboard users: focus returns to the page after a click in the frame.
+  useEffect(() => { if (playedKey === loadKey && document.activeElement === frameRef.current) frameRef.current.blur(); }, [playedKey, loadKey]);
+
+  // --- SUBTITLES (ours) ---
+  useEffect(() => {
+    if (!isFrameX) return undefined;
+    const key = `${movie.id}|${season}|${episode}`;
+    let cancelled = false;
+    setSubTracks((t) => (t.key === key ? t : { key, list: [], status: 'loading' }));
+    fetchFrameXSubtitles({ id: movie.id, isTV, season, episode })
+      .then((list) => { if (!cancelled) setSubTracks({ key, list, status: 'ready' }); })
+      .catch(() => { if (!cancelled) setSubTracks({ key, list: [], status: 'error' }); });
+    return () => { cancelled = true; };
+  }, [isFrameX, movie.id, isTV, season, episode]);
+  // New episode with subtitles on: keep the same language.
+  const subsWanted = useRef(false);
+  useEffect(() => {
+    if (!subsWanted.current || subTracks.status !== 'ready') return;
+    if (!subTracks.list.some((t) => t.url === subUrl)) setSubUrl(pickTrack(subTracks.list, subPrefs.lang)?.url || null);
+  }, [subTracks]);
+  useEffect(() => {
+    if (!subUrl) return undefined;
+    let cancelled = false;
+    loadSubtitleCues(subUrl)
+      .then((cues) => { if (!cancelled) setSubCues({ url: subUrl, cues }); })
+      .catch(() => { if (!cancelled) setSubCues({ url: subUrl, cues: [] }); });
+    return () => { cancelled = true; };
+  }, [subUrl]);
+  const chooseSubTrack = (url) => {
+    subsWanted.current = !!url;
+    setSubUrl(url);
+    setSubOffset(0);
+    const track = subTracks.list.find((t) => t.url === url);
+    if (track) updateSubPrefs({ lang: track.lang });
+  };
+  const updateSubPrefs = (patch) => setSubPrefs((p) => { const next = { ...p, ...patch }; saveSubPrefs(next); return next; });
+  const toggleSubtitles = () => {
+    if (subUrl) { chooseSubTrack(null); return; }
+    const track = pickTrack(subTracks.list, subPrefs.lang);
+    if (track) chooseSubTrack(track.url);
+    else setPanel('subtitles'); // nothing found (or still loading): show why
+  };
+  // The subtitle clock: the last reported time, when it came, and whether it is moving.
+  const clockRef = useRef({ t: 0, at: 0, playing: false, speed: 1 });
+  useEffect(() => {
+    clockRef.current = { t: player.currentTime, at: performance.now(), playing: player.playing, speed };
+  }, [player.currentTime, player.playing, speed]);
+
   // --- SOURCE / SERVER CHANGES (resume from where you are) ---
   const resumeHere = () => setStartAt(isFrameX && player.currentTime > 5 ? player.currentTime : startAt);
 
@@ -376,7 +477,6 @@ const WatchPage = ({ movie, user, onClose }) => {
     resumeHere();
     setFailedSources((prev) => prev.filter((f) => f !== id));
     setSourceId(id);
-    setNativeControls(false);
     setBackupLoading(true);
     setShieldActive(true);
     setPanel(null);
@@ -392,23 +492,6 @@ const WatchPage = ({ movie, user, onClose }) => {
     setBackupLoading(true);
     setShieldActive(true);
   };
-  const toggleSubtitles = (on) => {
-    setPanel(null);
-    if (on) {
-      setSubtitlesOn(true);
-      player.send('setSubtitle', { index: 0 });
-    } else if (subtitlesOn) {
-      // frameXTV has no working "off" command (tested): reload at the current second instead.
-      setSubtitlesOn(false);
-      reload();
-    }
-  };
-  const openNativeControls = () => {
-    resumeHere();
-    setNativeControls(true);
-    setPanel(null);
-  };
-
   // --- VOLUME / SPEED ---
   const applyVolume = (v) => {
     const next = Math.min(1, Math.max(0, v));
@@ -467,11 +550,7 @@ const WatchPage = ({ movie, user, onClose }) => {
     };
   }, [phone, canFullscreen]);
 
-  // Phones: go immersive as the player opens (the Play tap still counts as the user gesture).
-  useEffect(() => {
-    if (phone) enterRealFullscreen();
-    return () => { exitRealFullscreen(); };
-  }, []);
+  useEffect(() => () => { exitRealFullscreen(); }, []);
 
   useEffect(() => {
     const onResize = () => setVp(viewport());
@@ -490,6 +569,9 @@ const WatchPage = ({ movie, user, onClose }) => {
     : undefined;
   const fullscreenOn = phone ? immersive : isFullscreen;
   const showFullscreenButton = phone || canFullscreen;
+  // Phone held upright and not full screen: the older inline layout, a 16:9 player at the top with
+  // the details, episodes and related titles under it. Turning the phone sideways fills the screen.
+  const inline = phone && !immersive && vp.h >= vp.w;
 
   // --- CHROME AUTO HIDE ---
   const pinned = !!panel || !player.playing || nextUp !== null || !custom;
@@ -549,7 +631,7 @@ const WatchPage = ({ movie, user, onClose }) => {
       else if (k === 'arrowdown') { e.preventDefault(); applyVolume(volume - 0.1); }
       else if (k === 'm') toggleMute();
       else if (k === 'f') toggleFullscreen();
-      else if (k === 'c') toggleSubtitles(!subtitlesOn);
+      else if (k === 'c') toggleSubtitles();
       else if (k === 'n' && hasNext) handleNextEpisode();
       else return;
       wake();
@@ -566,20 +648,32 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, []);
 
   const iframeSrc = useMemo(
-    () => source.url({ id: movie.id, isTV, season, episode, start: startAt, provider: providerId, title, poster, nativeControls }),
+    () => source.url({ id: movie.id, isTV, season, episode, start: startAt, provider: providerId, title, poster }),
     [loadKey]
   );
 
   const currentEp = episodesList.find((e) => e.episode_number === episode);
   const subtitle = isTV ? `S${season}:E${episode}${currentEp?.name ? ` · ${currentEp.name}` : ''}` : (movie.year || String(movie.release_date || '').slice(0, 4) || 'Movie');
   const serverName = isFrameX ? (providers.find((p) => p.id === providerId)?.name || 'Auto server') : source.name;
-  // With our controls, frameXTV stays hidden until it reports a stream (its own UI is off). With its
-  // own controls it is shown as soon as its page is up, exactly like the official site.
-  const loading = isFrameX
-    ? (custom ? !player.duration && !player.failed : !player.ready && !player.failed)
-    : backupLoading;
+  // frameXTV stays hidden until it reports a stream (or the viewer has to click it to start).
+  const loading = isFrameX ? !player.duration && !player.failed && !noStream && !frameTaps : backupLoading;
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const remaining = player.duration ? player.duration - player.currentTime : 0;
+
+  // --- PHONE DETAILS (inline layout) ---
+  // Stable handlers so the memoized details section does not re-render with playback updates.
+  const navigate = useNavigate();
+  const latest = useRef({});
+  latest.current = { reload, onClose, chooseSource };
+  const openSettings = useCallback(() => setPanel((p) => (p === 'settings' ? null : 'settings')), []);
+  const reloadStable = useCallback(() => latest.current.reload(), []);
+  const backToOurPlayer = useCallback(() => latest.current.chooseSource('framex'), []);
+  const openTitle = useCallback((m) => {
+    latest.current.onClose?.();
+    navigate(`/${m.type || (isTV ? 'tv' : 'movie')}/${m.id}`);
+  }, [navigate, isTV]);
+  if (inline && panel === 'episodes') setPanel(null); // the list is on the page in this layout
+  const detailsNotice = !custom ? `${source.name} is a backup source with its own player.` : null;
 
   const settingsProps = {
     onClose: closePanel,
@@ -593,9 +687,14 @@ const WatchPage = ({ movie, user, onClose }) => {
     providers,
     providerId,
     onProvider: chooseProvider,
-    subtitlesOn,
-    onSubtitles: toggleSubtitles,
-    onNativeControls: openNativeControls,
+    subTracks: subTracks.list,
+    subStatus: subTracks.status,
+    subUrl,
+    onSubTrack: chooseSubTrack,
+    subPrefs,
+    onSubPrefs: updateSubPrefs,
+    subOffset,
+    onSubOffset: (v) => setSubOffset(Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10),
     speed,
     onSpeed: applySpeed,
   };
@@ -608,7 +707,9 @@ const WatchPage = ({ movie, user, onClose }) => {
       aria-modal="true"
       aria-label={`Watching ${title}`}
       ref={rootRef}
-      className="fixed inset-0 z-[500] overflow-hidden overscroll-none bg-black font-body text-white"
+      className={inline
+        ? 'fixed inset-0 z-[500] overflow-y-auto overflow-x-hidden overscroll-contain bg-[#050505] font-body text-white'
+        : 'fixed inset-0 z-[500] overflow-hidden overscroll-none bg-black font-body text-white'}
     >
       <Helmet><title>{`Watching ${title}`}</title></Helmet>
 
@@ -618,7 +719,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         onPointerDown={touch ? undefined : wake}
         data-rotated={rotated || undefined}
         style={stageStyle}
-        className={`@container relative h-full w-full overflow-hidden bg-black ${uiVisible || !custom ? '' : 'cursor-none'}`}
+        className={`@container relative overflow-hidden bg-black ${inline ? 'sticky top-0 z-20 aspect-video w-full' : 'h-full w-full'} ${uiVisible || !custom ? '' : 'cursor-none'}`}
       >
         {/* Immersive backdrop while the stream connects */}
         <AnimatePresence>
@@ -630,18 +731,21 @@ const WatchPage = ({ movie, user, onClose }) => {
           )}
         </AnimatePresence>
 
-        <iframe
-          ref={frameRef}
-          key={loadKey}
-          title={`${title} video player`}
-          src={iframeSrc}
-          // When the embed shows its own controls, start it below our top bar so neither covers the other.
-          className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom ? 'top-0 h-full' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
-          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-          allowFullScreen
-          referrerPolicy="origin"
-          onLoad={() => setBackupLoading(false)}
-        />
+        {/* No playable stream: the frame is unloaded so nothing keeps playing out of sight */}
+        {!noStream && (
+          <iframe
+            ref={frameRef}
+            key={loadKey}
+            title={`${title} video player`}
+            src={iframeSrc}
+            // When the embed shows its own controls, start it below our top bar so neither covers the other.
+            className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom || inline ? 'top-0 h-full' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="origin"
+            onLoad={() => setBackupLoading(false)}
+          />
+        )}
 
         {/* Backup sources: first click is absorbed (blocks pop-up ads), then their own controls take over */}
         {!isFrameX && shieldActive && !backupLoading && (
@@ -658,7 +762,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         )}
 
         {/* Our click surface over frameXTV (its own controls are hidden with controls=0) */}
-        {custom && !player.failed && (
+        {custom && !player.failed && !noStream && !frameTaps && (
           <div
             className="absolute inset-0 z-10"
             onClick={handleSurfaceTap}
@@ -668,17 +772,43 @@ const WatchPage = ({ movie, user, onClose }) => {
         )}
 
         {/* Loading */}
-        {loading && !player.failed && (
+        {loading && !player.failed && !noStream && (
           <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 text-center px-6">
-            <Spinner size={52} />
+            <Spinner size={inline ? 40 : 52} />
             <p className="text-sm font-medium text-white/80">Connecting to {isFrameX ? `MovieHub Server · ${serverName}` : source.name}…</p>
-            {autoSwitch && <p className="text-xs text-white/45">If this stalls, we try another server automatically.</p>}
+            {autoSwitch && !inline && <p className="text-xs text-white/45">{tried.key === episodeKey && tried.ids.length ? `Server ${tried.ids.length + 1}: the last one had no stream we can play.` : 'If this stalls, we try another server automatically.'}</p>}
           </div>
         )}
 
         {/* Buffering mid playback */}
-        {custom && !loading && player.buffering && !player.failed && (
+        {custom && !loading && player.buffering && !player.failed && !frameTaps && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"><Spinner size={52} /></div>
+        )}
+
+        {/* Click / tap to play: drawn over the frame but lets the click through to frameXTV's video */}
+        {frameTaps && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 text-center" role="status">
+            {tapStarting && <Spinner size={inline ? 40 : 52} />}
+            {!tapStarting && (
+              <>
+                <span className={`flex items-center justify-center rounded-full bg-white/15 ring-1 ring-white/25 backdrop-blur-md ${inline ? 'h-14 w-14' : 'h-[72px] w-[72px]'}`}>
+                  <Play size={inline ? 26 : 34} className="ml-1 fill-white" aria-hidden="true" />
+                </span>
+                <span className="rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white/85">{touch ? 'Tap to play' : 'Click to play'}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Our subtitles, drawn over the video and lifted above the controls while they show */}
+        {custom && subUrl && subCues.url === subUrl && !frameTaps && (
+          <SubtitleOverlay
+            cues={subCues.cues}
+            clockRef={clockRef}
+            offset={subOffset}
+            prefs={subPrefs}
+            lift={uiVisible ? (inline ? 64 : 120) : 0}
+          />
         )}
 
         {/* Play / pause / seek flash */}
@@ -702,37 +832,37 @@ const WatchPage = ({ movie, user, onClose }) => {
         </AnimatePresence>
 
         {/* Touch: Netflix style center row (back 10, play / pause, forward 10) while controls show */}
-        {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10">
-            <button type="button" onClick={() => { flashIcon('back'); player.seekBy(-10); wake(); }} aria-label="Back 10 seconds" className="pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform">
-              <RotateCcw size={28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
+        {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && !frameTaps && (
+          <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${inline ? 'gap-8' : 'gap-10'}`}>
+            <button type="button" onClick={() => { flashIcon('back'); player.seekBy(-10); wake(); }} aria-label="Back 10 seconds" className={`pointer-events-auto relative flex items-center ${inline ? 'h-12 w-12' : 'h-14 w-14'} justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform`}>
+              <RotateCcw size={inline ? 24 : 28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
             </button>
-            <button type="button" onClick={() => { togglePlay(); wake(); }} aria-label={player.paused ? 'Play' : 'Pause'} className="pointer-events-auto flex h-[72px] w-[72px] items-center justify-center rounded-full bg-white/15 ring-1 ring-white/25 active:scale-90 motion-safe:transition-transform">
+            <button type="button" onClick={() => { togglePlay(); wake(); }} aria-label={player.paused ? 'Play' : 'Pause'} className={`pointer-events-auto flex items-center justify-center rounded-full bg-white/15 ring-1 ring-white/25 active:scale-90 motion-safe:transition-transform ${inline ? 'h-[60px] w-[60px]' : 'h-[72px] w-[72px]'}`}>
               {player.paused ? <Play size={34} className="ml-1 fill-white" aria-hidden="true" /> : <Pause size={34} className="fill-white" aria-hidden="true" />}
             </button>
-            <button type="button" onClick={() => { flashIcon('fwd'); player.seekBy(10); wake(); }} aria-label="Forward 10 seconds" className="pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform">
-              <RotateCw size={28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
+            <button type="button" onClick={() => { flashIcon('fwd'); player.seekBy(10); wake(); }} aria-label="Forward 10 seconds" className={`pointer-events-auto relative flex items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform ${inline ? 'h-12 w-12' : 'h-14 w-14'}`}>
+              <RotateCw size={inline ? 24 : 28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
             </button>
           </div>
         )}
 
         {/* Paused: big center play (mouse / desktop) */}
-        {custom && !touch && !loading && player.paused && !player.ended && !player.failed && nextUp === null && (
+        {custom && !touch && !loading && player.paused && !player.ended && !player.failed && !noStream && !frameTaps && nextUp === null && (
           <button type="button" onClick={togglePlay} aria-label="Play" className="absolute left-1/2 top-1/2 z-20 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 backdrop-blur-md ring-1 ring-white/25 motion-safe:transition-transform hover:scale-110">
             <Play size={34} className="ml-1 fill-white" aria-hidden="true" />
           </button>
         )}
 
         {/* Stream failure */}
-        {isFrameX && player.failed && (
+        {isFrameX && (player.failed || noStream) && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-6">
             <div className="max-w-md text-center">
-              <ServerCrash size={40} className="mx-auto text-accent-text" aria-hidden="true" />
-              <h2 className="mt-4 text-xl font-semibold">{player.failed === 'no-response' ? 'MovieHub Server did not respond' : 'No stream found on this server'}</h2>
-              <p className="mt-2 text-sm text-white/60">
-                {autoSwitch ? 'Trying another server…' : 'Try another MovieHub server or a backup source.'}
+              <ServerCrash size={inline ? 28 : 40} className="mx-auto text-accent-text" aria-hidden="true" />
+              <h2 className={inline ? 'mt-2 text-base font-semibold' : 'mt-4 text-xl font-semibold'}>{noStream ? 'No playable stream on MovieHub servers' : 'MovieHub Server did not respond'}</h2>
+              <p className={`text-sm text-white/60 ${inline ? 'mt-1' : 'mt-2'}`}>
+                {autoSwitch && !noStream ? 'Trying another server…' : 'Try again, or pick a server yourself.'}
               </p>
-              <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <div className={`flex flex-wrap justify-center gap-3 ${inline ? 'mt-3' : 'mt-6'}`}>
                 <button type="button" onClick={reload} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RefreshCcw size={16} aria-hidden="true" /> Try again</button>
                 <button type="button" onClick={() => setPanel('settings')} data-settings-toggle className="inline-flex h-11 items-center gap-2 rounded-full border border-white/20 px-5 text-sm font-semibold hover:bg-white/10"><Settings size={16} aria-hidden="true" /> Choose server</button>
               </div>
@@ -745,7 +875,7 @@ const WatchPage = ({ movie, user, onClose }) => {
           {nextUp !== null && (
             <Motion.div
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
-              className="absolute bottom-28 right-4 sm:right-8 z-30 w-[min(340px,calc(100vw-32px))] rounded-panel border border-white/10 bg-[#111116]/95 p-4 backdrop-blur-xl shadow-card"
+              className={`absolute z-30 rounded-panel border border-white/10 bg-[#111116]/95 backdrop-blur-xl shadow-card ${inline ? 'inset-x-2 bottom-2 p-3' : 'bottom-28 right-4 sm:right-8 w-[min(340px,calc(100vw-32px))] p-4'}`}
               role="status"
             >
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-white/50">Next episode in {nextUp}s</p>
@@ -761,17 +891,19 @@ const WatchPage = ({ movie, user, onClose }) => {
         </AnimatePresence>
 
         {/* TOP BAR */}
-        <div className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12 motion-safe:transition-opacity duration-300 ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b motion-safe:transition-opacity duration-300 ${inline ? 'from-black/75 to-transparent px-1 pt-1 pb-6' : 'from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12'} ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="pointer-events-auto flex min-w-0 items-center gap-2 sm:gap-4">
               <Ctl label="Back" onClick={onClose}><ArrowLeft size={24} aria-hidden="true" /></Ctl>
               <div className="min-w-0">
-                <h1 className="truncate text-base sm:text-lg font-semibold">{title}</h1>
+                {inline
+                  ? <p className="truncate text-sm font-semibold">{title}</p>
+                  : <h1 className="truncate text-base sm:text-lg font-semibold">{title}</h1>}
                 <p className="truncate text-xs text-white/60">{subtitle}</p>
               </div>
             </div>
             <div className="pointer-events-auto flex shrink-0 items-center gap-1">
-              {!custom && (
+              {(!custom || frameTaps) && !inline && (
                 <>
                   {isTV && <Ctl label="Episodes" onClick={() => setPanel(panel === 'episodes' ? null : 'episodes')} active={panel === 'episodes'}><ListVideo size={20} aria-hidden="true" /></Ctl>}
                   {isTV && hasNext && <Ctl label="Next episode" onClick={handleNextEpisode}><SkipForward size={20} aria-hidden="true" /></Ctl>}
@@ -784,33 +916,29 @@ const WatchPage = ({ movie, user, onClose }) => {
                   )}
                 </>
               )}
-              {custom && (
+              {(!custom || frameTaps) && inline && showFullscreenButton && (
+                <Ctl label={fullscreenOn ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
+                  {fullscreenOn ? <Minimize size={20} aria-hidden="true" /> : <Maximize size={20} aria-hidden="true" />}
+                </Ctl>
+              )}
+              {custom && !frameTaps && (
                 <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-md">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" /> {serverName}
                 </span>
               )}
             </div>
           </div>
-          {!custom && (
+          {!custom && !inline && (
             <p className="pointer-events-none mt-2 ml-14 text-[11px] text-white/45">
-              {nativeControls
-                ? (ios
-                  ? 'Built in player controls (iPhone only plays with sound from them)'
-                  : handedOff ? 'Switched to the built in player · tap play in the video if it waits' : 'Built in player controls')
-                : `${source.name} uses its own controls inside the video`}
-              {!(ios && nativeControls) && (
-                <>
-                  {' · '}
-                  <button type="button" onClick={() => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">back to our player</button>
-                </>
-              )}
+              {`${source.name} is a backup source with its own player · `}
+              <button type="button" onClick={() => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">back to our player</button>
             </p>
           )}
         </div>
 
         {/* BOTTOM CONTROLS (frameXTV only: these really drive it through postMessage) */}
-        {custom && (
-          <div className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 sm:px-6 pt-16 pb-3 sm:pb-5 motion-safe:transition-opacity duration-300 ${uiVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+        {custom && !frameTaps && !(inline && nextUp !== null) && (
+          <div className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/50 to-transparent motion-safe:transition-opacity ${inline ? 'px-2 pt-10 pb-0.5' : 'px-3 sm:px-6 pt-16 pb-3 sm:pb-5'} duration-300 ${uiVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
             <div className="flex items-center gap-3">
               <SeekBar rotated={rotated} current={player.currentTime} duration={player.duration} onSeek={(t) => { player.seek(t); wake(); }} />
               <span className="shrink-0 text-xs sm:text-sm font-medium tabular-nums text-white/80">{player.duration ? `-${fmt(remaining)}` : '--:--'}</span>
@@ -849,10 +977,10 @@ const WatchPage = ({ movie, user, onClose }) => {
 
               <div className="flex items-center gap-0.5 sm:gap-1">
                 {isTV && hasNext && <Ctl label="Next episode" onClick={handleNextEpisode}><SkipForward size={22} className="fill-white" aria-hidden="true" /></Ctl>}
-                {isTV && <Ctl label="Episodes" onClick={() => setPanel(panel === 'episodes' ? null : 'episodes')} active={panel === 'episodes'}><ListVideo size={22} aria-hidden="true" /></Ctl>}
-                <Ctl label={subtitlesOn ? 'Turn subtitles off' : 'Turn subtitles on'} onClick={() => toggleSubtitles(!subtitlesOn)} active={subtitlesOn} aria-pressed={subtitlesOn}>
+                {isTV && !inline && <Ctl label="Episodes" onClick={() => setPanel(panel === 'episodes' ? null : 'episodes')} active={panel === 'episodes'}><ListVideo size={22} aria-hidden="true" /></Ctl>}
+                <Ctl label={subUrl ? 'Turn subtitles off' : 'Turn subtitles on'} onClick={toggleSubtitles} active={!!subUrl} aria-pressed={!!subUrl}>
                   <Captions size={22} aria-hidden="true" />
-                  {subtitlesOn && <span className="absolute bottom-1.5 h-0.5 w-4 rounded-full bg-accent" aria-hidden="true" />}
+                  {subUrl && <span className="absolute bottom-1.5 h-0.5 w-4 rounded-full bg-accent" aria-hidden="true" />}
                 </Ctl>
                 <Ctl label="Servers and settings" onClick={() => setPanel(panel === 'settings' ? null : 'settings')} active={panel === 'settings'} data-settings-toggle><Settings size={22} aria-hidden="true" /></Ctl>
                 {showFullscreenButton && (
@@ -867,10 +995,10 @@ const WatchPage = ({ movie, user, onClose }) => {
 
         {/* PANELS */}
         <AnimatePresence>
-          {panel === 'settings' && (
-            <SettingsMenu key="settings" {...settingsProps} position={custom ? 'bottom-24 right-3 sm:right-6' : 'top-20 right-3 sm:right-6'} />
+          {(panel === 'settings' || panel === 'subtitles') && !inline && (
+            <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position={custom ? 'bottom-24 right-3 sm:right-6' : 'top-20 right-3 sm:right-6'} />
           )}
-          {panel === 'episodes' && isTV && (
+          {panel === 'episodes' && isTV && !inline && (
             <EpisodesPanel
               key="episodes"
               title={title}
@@ -889,8 +1017,8 @@ const WatchPage = ({ movie, user, onClose }) => {
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70">
             <div className="text-center">
               <p className="text-sm text-white/60">You finished</p>
-              <h2 className="mt-1 font-display text-5xl uppercase">{title}</h2>
-              <div className="mt-6 flex justify-center gap-3">
+              <h2 className={`mt-1 font-display uppercase ${inline ? 'text-3xl' : 'text-5xl'}`}>{title}</h2>
+              <div className={`flex justify-center gap-3 ${inline ? 'mt-3' : 'mt-6'}`}>
                 <button type="button" onClick={() => { player.seek(0); player.play(); }} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RotateCcw size={16} aria-hidden="true" /> Watch again</button>
                 <button type="button" onClick={onClose} className="h-11 rounded-full border border-white/20 px-5 text-sm font-semibold hover:bg-white/10">Back to browsing</button>
               </div>
@@ -904,6 +1032,37 @@ const WatchPage = ({ movie, user, onClose }) => {
           </p>
         )}
       </div>
+
+      {inline && (
+        <MobileWatchDetails
+          movie={movie}
+          title={title}
+          isTV={isTV}
+          season={season}
+          episode={episode}
+          episodeInfo={currentEp}
+          seasons={seasonsData}
+          onPickEpisode={goToEpisode}
+          serverName={serverName}
+          onSettings={openSettings}
+          onReload={reloadStable}
+          onNext={hasNext ? handleNextEpisode : undefined}
+          notice={detailsNotice}
+          noticeActionLabel={!custom ? 'Back to our player' : undefined}
+          onNoticeAction={backToOurPlayer}
+          onOpenTitle={openTitle}
+        />
+      )}
+
+      {/* Phone layout: settings open as a sheet over the page, not inside the small player */}
+      <AnimatePresence>
+        {inline && (panel === 'settings' || panel === 'subtitles') && (
+          <div key="settings-sheet" className="fixed inset-0 z-[510] pointer-events-none">
+            <div className="pointer-events-auto absolute inset-0 bg-black/50" aria-hidden="true" />
+            <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position="pointer-events-auto inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+12px)]" />
+          </div>
+        )}
+      </AnimatePresence>
     </Motion.div>
   );
 };

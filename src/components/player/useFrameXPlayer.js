@@ -5,9 +5,9 @@ const ADVANCE_WINDOW_MS = 1500; // time still moving within this window = playin
 const READY_TIMEOUT_MS = 15000; // no frameXTV:ready by then = the embed failed to load
 // Ready, but no playback messages by then = frameXTV is showing something we cannot track. Its
 // 'Backup fallback iframe' (used when its own servers have no stream, which depends on the viewer's
-// network and country) relays events to ITSELF, not to us. The video does play, so the player stops
-// hiding the frame and hands control to it (see 'silent').
-const SILENT_MS = 8000;
+// network and country) relays events to ITSELF, not to us. The page then loads the next MovieHub
+// server (see 'silent'). Long enough that a slow server is not skipped while it is still starting.
+const SILENT_MS = 12000;
 const STUCK_MS = 8000; // asked to play but time frozen this long = treat as paused (autoplay blocked, stopped in frame).
 // frameXTV cannot tell buffering from paused, so this is long enough to ride out a slow server.
 

@@ -79,7 +79,13 @@ export const fetchFrameXSubtitles = ({ id, isTV, season, episode }) => {
   if (isTV) { q.set('season', String(season)); q.set('episode', String(episode)); }
   return fetch(`${FRAMEX_API}/subtitles?${q}`)
     .then((r) => (r.ok ? r.json() : { subtitles: [] }))
-    .then((d) => (d.subtitles || []).map((s, index) => ({ index, label: s.label?.replace(/^Subtitles\s*•\s*/, '') || s.lang || `Track ${index + 1}`, lang: s.lang })))
+    .then((d) => (d.subtitles || []).filter((s) => s?.url).map((s, index) => ({
+      index,
+      url: s.url,
+      label: s.label?.replace(/^Subtitles\s*•\s*/, '') || s.lang || `Track ${index + 1}`,
+      lang: s.lang || s.language || null,
+      isDefault: !!s.isDefault,
+    })))
     .catch(() => []);
 };
 
