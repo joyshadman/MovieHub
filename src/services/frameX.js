@@ -79,13 +79,15 @@ export const fetchFrameXSubtitles = ({ id, isTV, season, episode }) => {
   if (isTV) { q.set('season', String(season)); q.set('episode', String(episode)); }
   return fetch(`${FRAMEX_API}/subtitles?${q}`)
     .then((r) => (r.ok ? r.json() : { subtitles: [] }))
-    .then((d) => (d.subtitles || []).filter((s) => s?.url).map((s, index) => ({
+    // index = position in frameXTV's own list (its setSubtitle command takes that number), so map
+    // before filtering.
+    .then((d) => (d.subtitles || []).map((s, index) => ({
       index,
-      url: s.url,
-      label: s.label?.replace(/^Subtitles\s*•\s*/, '') || s.lang || `Track ${index + 1}`,
-      lang: s.lang || s.language || null,
-      isDefault: !!s.isDefault,
-    })))
+      url: s?.url,
+      label: s?.label?.replace(/^Subtitles\s*•\s*/, '') || s?.lang || `Track ${index + 1}`,
+      lang: s?.lang || s?.language || null,
+      isDefault: !!s?.isDefault,
+    })).filter((s) => s.url))
     .catch(() => []);
 };
 

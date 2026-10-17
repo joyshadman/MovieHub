@@ -24,6 +24,8 @@ import { Spinner } from '../components/ui/feedback';
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
 const NEXT_UP_SECONDS = 8;
+// iPhone full screen: how long taps go straight to the video after the full screen button.
+const FS_HINT_MS = 6000;
 // After a tap or click on the video, how long playback gets to start before we try another server.
 const TAP_START_MS = 6000;
 
@@ -330,6 +332,13 @@ const WatchPage = ({ movie, user, onClose }) => {
     if (muted) player.send('mute');
     if (speed !== 1) player.send('setSpeed', { speed });
   }, [custom, player.ready, loadKey]);
+  // iPhone: hand the chosen subtitle to frameXTV (by its index in frameXTV's list), after every load.
+  const nativeSubs = ios;
+  const nativeSubIndex = nativeSubs ? subTracks.list.find((t) => t.url === subUrl)?.index : undefined;
+  useEffect(() => {
+    if (!custom || !player.ready || nativeSubIndex === undefined) return;
+    player.send('setSubtitle', { index: nativeSubIndex });
+  }, [custom, player.ready, loadKey, nativeSubIndex]);
 
   const progressBucket = Math.floor(player.currentTime / 5);
   useEffect(() => {
@@ -451,6 +460,9 @@ const WatchPage = ({ movie, user, onClose }) => {
     return () => { cancelled = true; };
   }, [subUrl]);
   const chooseSubTrack = (url) => {
+    // iPhone: the subtitles are frameXTV's own text track (sent below), because Apple's full screen
+    // player only shows tracks of the video itself. It has no working "off", so off reloads here.
+    if (nativeSubs && !url && subUrl) latest.current.reload();
     subsWanted.current = !!url;
     setSubUrl(url);
     setSubOffset(0);
@@ -527,6 +539,7 @@ const WatchPage = ({ movie, user, onClose }) => {
     if (fullscreenElement()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document).catch(() => {});
   };
   const toggleFullscreen = () => {
+    if (nativeFullscreen) { showFsHint(); return; }
     if (phone) {
       if (immersive) { setImmersive(false); exitRealFullscreen(); }
       else { setImmersive(true); enterRealFullscreen(); }
@@ -535,6 +548,21 @@ const WatchPage = ({ movie, user, onClose }) => {
     if (fullscreenElement()) exitRealFullscreen();
     else enterRealFullscreen();
   };
+  // --- iPHONE FULL SCREEN ---
+  // iPhone browsers have no full screen for page elements, only Apple's own video player, and only a
+  // gesture inside frameXTV's frame can open it (its double tap handler calls webkitEnterFullscreen).
+  // So the button lets the next taps through to the video and says to double tap it.
+  const nativeFullscreen = ios && !canFullscreen;
+  const [fsHint, setFsHint] = useState(false);
+  const fsHintTimer = useRef(null);
+  const showFsHint = () => {
+    setFsHint(true);
+    setPanel(null);
+    clearTimeout(fsHintTimer.current);
+    fsHintTimer.current = setTimeout(() => setFsHint(false), FS_HINT_MS);
+  };
+  useEffect(() => () => clearTimeout(fsHintTimer.current), []);
+
   useEffect(() => {
     const onChange = () => {
       const fs = !!fullscreenElement();
@@ -567,7 +595,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   const stageStyle = rotated
     ? { position: 'absolute', top: 0, left: 0, width: vp.h, height: vp.w, transform: `translateX(${vp.w}px) rotate(90deg)`, transformOrigin: 'top left' }
     : undefined;
-  const fullscreenOn = phone ? immersive : isFullscreen;
+  const fullscreenOn = nativeFullscreen ? false : phone ? immersive : isFullscreen;
   const showFullscreenButton = phone || canFullscreen;
   // Phone held upright and not full screen: the older inline layout, a 16:9 player at the top with
   // the details, episodes and related titles under it. Turning the phone sideways fills the screen.
@@ -695,6 +723,7 @@ const WatchPage = ({ movie, user, onClose }) => {
     onSubPrefs: updateSubPrefs,
     subOffset,
     onSubOffset: (v) => setSubOffset(Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10),
+    nativeSubs,
     speed,
     onSpeed: applySpeed,
   };
@@ -762,7 +791,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         )}
 
         {/* Our click surface over frameXTV (its own controls are hidden with controls=0) */}
-        {custom && !player.failed && !noStream && !frameTaps && (
+        {custom && !player.failed && !noStream && !frameTaps && !fsHint && (
           <div
             className="absolute inset-0 z-10"
             onClick={handleSurfaceTap}
@@ -801,7 +830,14 @@ const WatchPage = ({ movie, user, onClose }) => {
         )}
 
         {/* Our subtitles, drawn over the video and lifted above the controls while they show */}
-        {custom && subUrl && subCues.url === subUrl && !frameTaps && (
+        {/* iPhone: double tap to open Apple's full screen player (taps reach the video meanwhile) */}
+        {fsHint && (
+          <p className="pointer-events-none absolute left-1/2 top-1/2 z-30 w-max max-w-[calc(100%-32px)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/75 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-card backdrop-blur-md" role="status">
+            Double tap the video for full screen
+          </p>
+        )}
+
+        {custom && !nativeSubs && subUrl && subCues.url === subUrl && !frameTaps && (
           <SubtitleOverlay
             cues={subCues.cues}
             clockRef={clockRef}
@@ -832,7 +868,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         </AnimatePresence>
 
         {/* Touch: Netflix style center row (back 10, play / pause, forward 10) while controls show */}
-        {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && !frameTaps && (
+        {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && !frameTaps && !fsHint && (
           <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${inline ? 'gap-8' : 'gap-10'}`}>
             <button type="button" onClick={() => { flashIcon('back'); player.seekBy(-10); wake(); }} aria-label="Back 10 seconds" className={`pointer-events-auto relative flex items-center ${inline ? 'h-12 w-12' : 'h-14 w-14'} justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform`}>
               <RotateCcw size={inline ? 24 : 28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>

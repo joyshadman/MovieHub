@@ -56,7 +56,7 @@ const Tag = ({ children, tone = 'plain' }) => (
 const SettingsMenu = ({
   onClose, sources, sourceId, onSource, failedSources, autoSwitch, onAutoSwitch,
   custom, providers, providerId, onProvider,
-  subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset,
+  subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset, nativeSubs = false,
   speed, onSpeed, position = 'bottom-24 right-3 sm:right-6', initialTab = 'servers',
 }) => {
   const reduce = useReducedMotion();
@@ -177,7 +177,14 @@ const SettingsMenu = ({
                 </div>
               )}
 
-              {subView === 'style' && (
+              {subView === 'style' && nativeSubs && (
+                <p className="px-3 py-4 text-sm leading-6 text-white/60">
+                  On iPhone the subtitles come from the video itself, so they also show in full screen. Change their look in
+                  Settings, Accessibility, Subtitles &amp; Captioning. In full screen, the CC button lists every language.
+                </p>
+              )}
+
+              {subView === 'style' && !nativeSubs && (
                 <div>
                   <div className="@container relative mx-1.5 mt-1 flex h-24 items-end justify-center overflow-hidden rounded-xl bg-[linear-gradient(135deg,#3b2a1f,#14202b)] pb-3" aria-hidden="true">
                     <SubtitleText text={'This is how your\nsubtitles will look.'} prefs={subPrefs} />
