@@ -24,6 +24,11 @@ import { Spinner } from '../components/ui/feedback';
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
 const NEXT_UP_SECONDS = 8;
+// Sandbox for the player frame: it may run scripts, keep its own storage, go full screen (allowFullScreen)
+// and lock the screen to landscape, but NOT open pop ups or new tabs (no allow-popups) and NOT
+// navigate this page anywhere (no allow-top-navigation). Ad redirects and pop unders are blocked by
+// the browser itself, also for frames nested inside the player.
+const FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
 // iPhone full screen: how long taps go straight to the video after the full screen button.
 const FS_HINT_MS = 6000;
 // After a tap or click on the video, how long playback gets to start before we try another server.
@@ -183,7 +188,11 @@ const WatchPage = ({ movie, user, onClose }) => {
 
   const source = STREAM_SOURCES.find((s) => s.id === sourceId) || STREAM_SOURCES[0];
   const isFrameX = source.id === 'framex';
-  const custom = isFrameX;
+  // Phones and tablets use frameXTV's OWN player (its controls, full screen and subtitle menu),
+  // sandboxed (see FRAME_SANDBOX): no pop ups, no new tabs, no redirects of this page. Desktop is
+  // unchanged: our player, no sandbox, backups offered.
+  const ownControls = touch;
+  const custom = isFrameX && !ownControls;
   const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}`;
   const episodeKey = `${season}|${episode}|${reloadKey}`;
   const poster = movie.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}` : (movie.backdrop ? String(movie.backdrop).replace('/t/p/original', '/t/p/w1280') : null);
@@ -199,7 +208,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   const exhausted = exhaustedKey === episodeKey;
   const rotateRef = useRef(() => {});
   rotateRef.current = () => {
-    if (!isFrameX) return;
+    if (!isFrameX || ownControls) return; // frameXTV's own player switches its servers itself
     if (!autoSwitch || exhausted) { setNoStreamKey(loadKey); return; }
     const done = [...new Set([...(tried.key === episodeKey ? tried.ids : []), providerId])];
     const next = [null, ...providers.map((p) => p.id)].find((id) => !done.includes(id));
@@ -378,7 +387,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, [episode, episodesList.length, season, seasonCount, goToEpisode]);
 
   // Ended (frameXTV:ended): next episode after a short countdown, like Netflix.
-  const ended = custom && player.ended;
+  const ended = isFrameX && player.ended;
   const [endedFor, setEndedFor] = useState(null);
   if (ended && endedFor !== loadKey) {
     setEndedFor(loadKey);
@@ -599,7 +608,9 @@ const WatchPage = ({ movie, user, onClose }) => {
   const showFullscreenButton = phone || canFullscreen;
   // Phone held upright and not full screen: the older inline layout, a 16:9 player at the top with
   // the details, episodes and related titles under it. Turning the phone sideways fills the screen.
-  const inline = phone && !immersive && vp.h >= vp.w;
+  // Phones with frameXTV's own player stay in this layout when turned sideways too (its own full
+  // screen button covers landscape).
+  const inline = phone && (ownControls || (!immersive && vp.h >= vp.w));
 
   // --- CHROME AUTO HIDE ---
   const pinned = !!panel || !player.playing || nextUp !== null || !custom;
@@ -676,7 +687,7 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, []);
 
   const iframeSrc = useMemo(
-    () => source.url({ id: movie.id, isTV, season, episode, start: startAt, provider: providerId, title, poster }),
+    () => source.url({ id: movie.id, isTV, season, episode, start: startAt, provider: providerId, title, poster, ownControls }),
     [loadKey]
   );
 
@@ -684,7 +695,10 @@ const WatchPage = ({ movie, user, onClose }) => {
   const subtitle = isTV ? `S${season}:E${episode}${currentEp?.name ? ` · ${currentEp.name}` : ''}` : (movie.year || String(movie.release_date || '').slice(0, 4) || 'Movie');
   const serverName = isFrameX ? (providers.find((p) => p.id === providerId)?.name || 'Auto server') : source.name;
   // frameXTV stays hidden until it reports a stream (or the viewer has to click it to start).
-  const loading = isFrameX ? !player.duration && !player.failed && !noStream && !frameTaps : backupLoading;
+  // Our controls: frameXTV stays hidden until it reports a stream. Its own player: shown once its page is up.
+  const loading = isFrameX
+    ? (custom ? !player.duration && !player.failed && !noStream && !frameTaps : !player.ready && !player.failed)
+    : backupLoading;
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const remaining = player.duration ? player.duration - player.currentTime : 0;
 
@@ -701,11 +715,13 @@ const WatchPage = ({ movie, user, onClose }) => {
     navigate(`/${m.type || (isTV ? 'tv' : 'movie')}/${m.id}`);
   }, [navigate, isTV]);
   if (inline && panel === 'episodes') setPanel(null); // the list is on the page in this layout
-  const detailsNotice = !custom ? `${source.name} is a backup source with its own player.` : null;
+  const detailsNotice = !isFrameX ? `${source.name} is a backup source with its own player.` : null;
 
   const settingsProps = {
     onClose: closePanel,
-    sources: STREAM_SOURCES,
+    // Phones and tablets: only sources that run sandboxed (no pop ups, no redirects). VidLink and VidSrc
+    // refuse to load in a sandboxed frame (checked 2026-10-17), so they are not offered there.
+    sources: ownControls ? STREAM_SOURCES.filter((src) => src.sandbox) : STREAM_SOURCES,
     sourceId,
     onSource: chooseSource,
     failedSources,
@@ -724,14 +740,15 @@ const WatchPage = ({ movie, user, onClose }) => {
     subOffset,
     onSubOffset: (v) => setSubOffset(Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10),
     nativeSubs,
+    ownPlayer: ownControls && isFrameX,
     speed,
     onSpeed: applySpeed,
   };
 
   return (
     <Motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      // No fade in: a see through first frame showed the page underneath (Home) before the player.
+      initial={false}
       role="dialog"
       aria-modal="true"
       aria-label={`Watching ${title}`}
@@ -742,13 +759,24 @@ const WatchPage = ({ movie, user, onClose }) => {
     >
       <Helmet><title>{`Watching ${title}`}</title></Helmet>
 
+      {/* Phones with frameXTV's own player: our back bar sits above the video, not on top of its controls */}
+      {inline && ownControls && (
+        <div className="sticky top-0 z-30 flex h-12 items-center gap-1 bg-[#050505] pr-3">
+          <Ctl label="Back" onClick={onClose}><ArrowLeft size={22} aria-hidden="true" /></Ctl>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight">{title}</p>
+            <p className="truncate text-[11px] text-white/55">{subtitle}</p>
+          </div>
+        </div>
+      )}
+
       <div
         ref={stageRef}
         onPointerMove={touch ? undefined : wake}
         onPointerDown={touch ? undefined : wake}
         data-rotated={rotated || undefined}
         style={stageStyle}
-        className={`@container relative overflow-hidden bg-black ${inline ? 'sticky top-0 z-20 aspect-video w-full' : 'h-full w-full'} ${uiVisible || !custom ? '' : 'cursor-none'}`}
+        className={`@container relative overflow-hidden bg-black ${inline ? (ownControls ? 'sticky top-12 z-20 aspect-video max-h-[calc(100svh-48px)] w-full' : 'sticky top-0 z-20 aspect-video w-full') : 'h-full w-full'} ${uiVisible || !custom ? '' : 'cursor-none'}`}
       >
         {/* Immersive backdrop while the stream connects */}
         <AnimatePresence>
@@ -770,6 +798,7 @@ const WatchPage = ({ movie, user, onClose }) => {
             // When the embed shows its own controls, start it below our top bar so neither covers the other.
             className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom || inline ? 'top-0 h-full' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            sandbox={ownControls && source.sandbox ? FRAME_SANDBOX : undefined}
             allowFullScreen
             referrerPolicy="origin"
             onLoad={() => setBackupLoading(false)}
@@ -926,8 +955,8 @@ const WatchPage = ({ movie, user, onClose }) => {
           )}
         </AnimatePresence>
 
-        {/* TOP BAR */}
-        <div className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b motion-safe:transition-opacity duration-300 ${inline ? 'from-black/75 to-transparent px-1 pt-1 pb-6' : 'from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12'} ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
+        {/* TOP BAR (not with frameXTV's own player on phones: the back bar above replaces it) */}
+        <div hidden={inline && ownControls} className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b motion-safe:transition-opacity duration-300 ${inline ? 'from-black/75 to-transparent px-1 pt-1 pb-6' : 'from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12'} ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="pointer-events-auto flex min-w-0 items-center gap-2 sm:gap-4">
               <Ctl label="Back" onClick={onClose}><ArrowLeft size={24} aria-hidden="true" /></Ctl>

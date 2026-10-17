@@ -56,7 +56,7 @@ const Tag = ({ children, tone = 'plain' }) => (
 const SettingsMenu = ({
   onClose, sources, sourceId, onSource, failedSources, autoSwitch, onAutoSwitch,
   custom, providers, providerId, onProvider,
-  subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset, nativeSubs = false,
+  subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset, nativeSubs = false, ownPlayer = false,
   speed, onSpeed, position = 'bottom-24 right-3 sm:right-6', initialTab = 'servers',
 }) => {
   const reduce = useReducedMotion();
@@ -217,7 +217,7 @@ const SettingsMenu = ({
               )}
             </>
           ) : (
-            <p className="px-3 py-4 text-sm leading-6 text-white/60">This backup source has its own subtitle button inside the video.</p>
+            <p className="px-3 py-4 text-sm leading-6 text-white/60">{ownPlayer ? 'Use the subtitle button inside the video.' : 'This backup source has its own subtitle button inside the video.'}</p>
           )
         )}
 

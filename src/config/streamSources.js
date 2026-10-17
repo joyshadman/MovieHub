@@ -12,8 +12,10 @@ export const STREAM_SOURCES = [
     id: 'framex',
     name: 'MovieHub Server',
     custom: true,
-    url: ({ id, isTV, season, episode, start, provider, title, poster }) =>
-      frameXEmbedUrl({ id, isTV, season, episode, start, provider, title, poster }),
+    sandbox: true,
+    // ownControls: frameXTV shows its own player UI (phones and tablets); otherwise ours drives it.
+    url: ({ id, isTV, season, episode, start, provider, title, poster, ownControls }) =>
+      frameXEmbedUrl({ id, isTV, season, episode, start, provider, title, poster, customControls: !ownControls }),
   },
   {
     id: 'vidlink',
