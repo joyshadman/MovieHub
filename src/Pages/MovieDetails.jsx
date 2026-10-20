@@ -16,6 +16,7 @@ import MovieRow from '../components/MovieRow';
 import TrailerBackdrop from '../components/TrailerBackdrop';
 import { fallbackGradient } from '../utils/fallbackArt';
 import { findCategoryGenre } from '../utils/genres';
+import { subscribeHistory, findHistoryItem, resumeFrom, formatLeft } from '../services/watchHistory';
 
 const formatRuntime = (min) => {
   if (!min) return null;
@@ -75,7 +76,9 @@ const MovieDetails = () => {
   const [cast, setCast] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showPlayer, setShowPlayer] = useState(false);
+  const [playFrom, setPlayFrom] = useState(undefined); // the player's `resume`; undefined = let it look up
   const [user, setUser] = useState(null);
+  const [history, setHistory] = useState([]);
   const [reviews, setReviews] = useState(undefined); // undefined loading, null error, [] none
   const [video, setVideo] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -132,6 +135,12 @@ const MovieDetails = () => {
     window.scrollTo(0, 0);
     return () => unsub();
   }, [id, type, reloadKey]);
+
+  // This viewer's history, live: the Resume button follows the player as it saves (spec 0004).
+  useEffect(() => {
+    if (!user) { setHistory([]); return undefined; }
+    return subscribeHistory(user.uid, setHistory);
+  }, [user]);
 
   const loadReviews = useCallback(async () => {
     setReviews(undefined);
@@ -200,12 +209,16 @@ const MovieDetails = () => {
     { label: 'Language', value: languageName(movie.language) },
     { label: 'Status', value: movie.status !== 'Unknown' ? movie.status : null },
   ].filter((f) => f.value);
+  const resume = resumeFrom(findHistoryItem(history, movie.id, type));
+  const canResume = !!resume && (resume.t > 0 || (type === 'tv' && (resume.season > 1 || resume.episode > 1)));
+  const resumeLabel = resume ? [type === 'tv' ? `S${resume.season} · E${resume.episode}` : null, resume.t > 0 ? formatLeft(resume.leftSec) : null].filter(Boolean).join(' · ') : '';
+  const openPlayer = (from) => { setPlayFrom(from); setShowPlayer(true); };
   const visibleTabs = TABS.filter((t) => (t.id === 'trailers' ? movie.videos?.length : t.id === 'similar' ? movie.similar?.length : t.id === 'cast' ? cast.length : true));
 
   return (
     <div className="font-body text-white">
       <AnimatePresence>
-        {showPlayer && <WatchPage movie={movie} user={user} onClose={() => setShowPlayer(false)} />}
+        {showPlayer && <WatchPage movie={movie} user={user} resume={playFrom} onClose={() => setShowPlayer(false)} />}
       </AnimatePresence>
 
       {/* HERO: full bleed muted trailer preview with a sound toggle, centered title art */}
@@ -277,7 +290,16 @@ const MovieDetails = () => {
           )}
 
           <Motion.div variants={HERO_ITEM} className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <Button variant="light" size="lg" onClick={() => setShowPlayer(true)} icon={<Play size={18} className="fill-black" aria-hidden="true" />} className="min-w-[132px]">Play</Button>
+            <Button
+              variant="light"
+              size="lg"
+              onClick={() => openPlayer(canResume ? resume : undefined)}
+              icon={<Play size={18} className="fill-black" aria-hidden="true" />}
+              className="min-w-[132px]"
+              aria-label={canResume ? `Resume ${movie.title}, ${resumeLabel}` : `Play ${movie.title}`}
+            >
+              {canResume ? (type === 'tv' ? `Resume S${resume.season} E${resume.episode}` : 'Resume') : 'Play'}
+            </Button>
             {/* Phones get an icon only trailer button so all four controls fit on one row. */}
             <span className="contents sm:hidden">
               <IconButton
@@ -316,6 +338,23 @@ const MovieDetails = () => {
               <Share2 size={18} aria-hidden="true" />
             </IconButton>
           </Motion.div>
+
+          {/* Where you left off (spec 0004): episode, time left, progress, and a fresh start */}
+          {canResume && (
+            <Motion.div variants={HERO_ITEM} className="mt-5 w-full max-w-xs">
+              <div className="flex items-center justify-between gap-3 text-xs text-white/75">
+                <span>{resumeLabel || 'Continue watching'}</span>
+                <button type="button" onClick={() => openPlayer({ season: resume.season, episode: resume.episode, t: 0 })} className="font-semibold text-white/60 underline-offset-2 hover:text-white hover:underline">
+                  Start over
+                </button>
+              </div>
+              {resume.percent > 0 && (
+                <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/20" role="progressbar" aria-label="Watched so far" aria-valuenow={resume.percent} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="h-full rounded-full bg-accent" style={{ width: `${resume.percent}%` }} />
+                </div>
+              )}
+            </Motion.div>
+          )}
         </Motion.div>
       </section>
 

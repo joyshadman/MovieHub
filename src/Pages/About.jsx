@@ -8,18 +8,15 @@ import { auth, db } from '../components/firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import VisitorTracker from '../components/VisitorTracker';
 import { EmptyState } from '../components/ui/feedback';
 
 // Page built from figma-desing/about-ui.md. The doc's own header and footer are left out on
-// purpose: the site Navbar and Footer stay. The developer credit, site updates and the owner's
-// visitor tracker are the existing About features, kept in the same editorial look.
+// purpose: the site Navbar and Footer stay. The developer credit and site updates are the existing
+// About features, kept in the same editorial look. Visitor tracking lives on the owner's Admin page
+// (spec 0003).
 
 const PORTFOLIO_URL = 'https://portfolio-blond-one-49.vercel.app/';
 const GITHUB_URL = 'https://github.com/joyshadman';
-// The visitor tracker is shown to this one account only. Firestore rules must enforce the same
-// (users and history readable by this email only), since page code alone hides, it does not protect.
-const OWNER_EMAIL = 'joyshadman@gmail.com';
 const HERO_IMG = 'https://images.unsplash.com/photo-1717915604557-94283edbcc1b?auto=format&fit=crop&w=2400&q=90';
 const STORY_IMG = 'https://images.unsplash.com/photo-1688678004647-945d5aaf91c1?auto=format&fit=crop&w=1400&q=85';
 const GRAIN = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
@@ -55,7 +52,6 @@ const About = ({ user: propUser }) => {
   const reduce = useReducedMotion();
   const user = propUser ?? auth.currentUser;
   const isAdmin = !!(user?.email && ADMIN_EMAILS.includes(user.email));
-  const isOwner = user?.email?.toLowerCase() === OWNER_EMAIL;
 
   const [showreel, setShowreel] = useState(false);
   const [updates, setUpdates] = useState([]);
@@ -298,9 +294,6 @@ const About = ({ user: propUser }) => {
           </form>
         )}
       </section>
-
-      {/* 6. OWNER ONLY: VISITOR TRACKING */}
-      {isOwner && <VisitorTracker className={`${container} scroll-mt-20 pb-24`} />}
 
       {/* 7. FINAL CTA */}
       <section id="community" aria-labelledby="community-title" className={`${container} scroll-mt-20 py-24 lg:py-32 text-center`}>

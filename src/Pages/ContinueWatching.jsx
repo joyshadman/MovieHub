@@ -2,13 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, X, Trash2 } from 'lucide-react';
 import { db } from '../components/firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import SectionHeader from '../components/ui/SectionHeader';
 import { ConfirmDialog } from '../components/ui/Modal';
 import { fallbackGradient } from '../utils/fallbackArt';
-
-const itemType = (item) => item.type || (item.first_air_date ? 'tv' : 'movie');
+import { itemType, subscribeHistory, resumeFrom, formatLeft } from '../services/watchHistory';
 
 const artFor = (movie) =>
   movie.backdrop_path
@@ -18,7 +17,9 @@ const artFor = (movie) =>
     : movie.backdrop || movie.image || null;
 
 // Figma "Landscape Card": 16:9 art, glass play button, title, episode or type, progress bar.
-const ContinueWatching = ({ user, onMovieClick }) => {
+// A card resumes in the player at the saved episode and second (onResume); without onResume it
+// opens the details page as before.
+const ContinueWatching = ({ user, onMovieClick, onResume }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -38,16 +39,10 @@ const ContinueWatching = ({ user, onMovieClick }) => {
       setLoading(false);
       return;
     }
-    const unsubHistory = onSnapshot(doc(db, 'history', user.uid), (docSnap) => {
-      if (docSnap.exists()) {
-        const items = docSnap.data().items || [];
-        setHistory([...items].sort((a, b) => b.watchedAt - a.watchedAt));
-      } else {
-        setHistory([]);
-      }
+    return subscribeHistory(user.uid, (items) => {
+      setHistory(items);
       setLoading(false);
     });
-    return () => unsubHistory();
   }, [user?.uid]);
 
   // Drag to scroll, with click protection so a drag never opens a title.
@@ -80,7 +75,9 @@ const ContinueWatching = ({ user, onMovieClick }) => {
 
   const handlePlayClick = (movie, e) => {
     e.stopPropagation();
-    if (!hasMoved) onMovieClick(movie);
+    if (hasMoved) return;
+    if (onResume) onResume(movie, resumeFrom(movie));
+    else onMovieClick(movie);
   };
 
   const deleteFromHistory = async (movie, e) => {
@@ -145,8 +142,11 @@ const ContinueWatching = ({ user, onMovieClick }) => {
         {history.map((movie) => {
           const art = artFor(movie);
           const title = movie.title || movie.name || 'Untitled';
-          const episode = movie.lastSeason ? `S${movie.lastSeason}:E${movie.lastEpisode || 1}` : itemType(movie) === 'tv' ? 'Series' : 'Movie';
-          const progress = Math.max(0, Math.min(100, Number(movie.progress) || 0));
+          const resume = resumeFrom(movie);
+          const episode = itemType(movie) === 'tv' ? `S${resume.season} · E${resume.episode}` : 'Movie';
+          // Old items carried a fixed 90 percent that meant nothing; only real progress shows.
+          const progress = resume.duration > 0 ? resume.percent : 0;
+          const left = formatLeft(resume.leftSec);
           return (
             <li key={`${itemType(movie)}-${movie.id}`} className="group relative shrink-0 w-[260px] sm:w-[300px] lg:w-[320px]">
               <div
@@ -163,7 +163,7 @@ const ContinueWatching = ({ user, onMovieClick }) => {
                 <div className="absolute inset-x-0 bottom-0 px-3 pb-3">
                   <div className="flex items-end justify-between gap-3 mb-2">
                     <h3 className="text-sm font-semibold text-white truncate">{title}</h3>
-                    <span className="text-[11px] text-muted whitespace-nowrap">{episode}</span>
+                    <span className="text-[11px] text-muted whitespace-nowrap">{episode}{left && progress > 0 ? ` · ${left}` : ''}</span>
                   </div>
                   <div className="h-1 rounded-full bg-white/20 overflow-hidden" role="progressbar" aria-label={`${title} progress`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
                     <div className="h-full bg-accent rounded-full" style={{ width: `${progress}%` }} />

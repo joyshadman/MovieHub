@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Search, LogOut, ChevronDown, Bookmark, Home, LayoutGrid, User, LogIn, Film, Tv, Info } from 'lucide-react';
+import { Search, LogOut, ChevronDown, Bookmark, Home, LayoutGrid, User, LogIn, Film, Tv, Info, ShieldCheck } from 'lucide-react';
 import { useWatchlist } from '../context/WatchlistContext';
 import { signOutUser } from '../services/authService';
+import { isOwner } from '../config/owner';
 import Logo from './Logo';
 import Avatar from './ui/Avatar';
 import Button, { IconButton } from './ui/Button';
@@ -17,6 +18,8 @@ const NAV_LINKS = [
   { name: 'My List', path: '/mylist' },
   { name: 'About', path: '/about' },
 ];
+// Owner only (spec 0003): the Admin page with maintenance mode and visitor tracking.
+const ADMIN_LINK = { name: 'Admin', path: '/admin' };
 
 // Figma Navbar (desktop), Top Bar (mobile) and Tab Bar (mobile).
 const Navbar = ({ user }) => {
@@ -29,6 +32,8 @@ const Navbar = ({ user }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const dropdownRef = useRef(null);
+  const owner = isOwner(user);
+  const navLinks = owner ? [...NAV_LINKS, ADMIN_LINK] : NAV_LINKS;
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -87,7 +92,7 @@ const Navbar = ({ user }) => {
           <div className="flex items-center gap-8 lg:gap-10 min-w-0">
             <Logo className="text-[28px] md:text-[32px]" />
             <ul className="hidden md:flex items-center gap-4 lg:gap-6">
-              {NAV_LINKS.map((item) => (
+              {navLinks.map((item) => (
                 <li key={item.path}>
                   <NavLink to={item.path} end={item.end} className={linkClass}>{item.name}</NavLink>
                 </li>
@@ -136,6 +141,11 @@ const Navbar = ({ user }) => {
                           <span className="flex items-center gap-3"><Bookmark size={16} aria-hidden="true" /> My List</span>
                           {libraryCount > 0 && <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-semibold">{libraryCount}</span>}
                         </Link>
+                        {owner && (
+                          <Link role="menuitem" to="/admin" className="flex items-center gap-3 rounded-control px-3 py-2.5 text-sm text-white hover:bg-white/10">
+                            <ShieldCheck size={16} aria-hidden="true" /> Admin
+                          </Link>
+                        )}
                         <button role="menuitem" type="button" onClick={handleSignOut} className="flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-sm text-accent-text hover:bg-white/10">
                           <LogOut size={16} aria-hidden="true" /> Sign out
                         </button>
@@ -195,7 +205,8 @@ const Navbar = ({ user }) => {
             { to: '/tv', label: 'TV Shows', icon: <Tv size={18} aria-hidden="true" /> },
             { to: '/mylist', label: `My List${libraryCount ? ` (${libraryCount})` : ''}`, icon: <Bookmark size={18} aria-hidden="true" /> },
             { to: '/about', label: 'About', icon: <Info size={18} aria-hidden="true" /> },
-          ].map((l) => (
+            owner && { to: '/admin', label: 'Admin', icon: <ShieldCheck size={18} aria-hidden="true" /> },
+          ].filter(Boolean).map((l) => (
             <li key={l.to}>
               <Link to={l.to} onClick={() => setShowAccount(false)} className="flex items-center gap-3 rounded-control px-3 py-3 text-white hover:bg-white/10">
                 {l.icon} {l.label}

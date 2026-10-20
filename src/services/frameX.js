@@ -12,7 +12,10 @@
 //                playing / buffering from timeupdate and keeps volume and speed as its own state.
 // Server list and subtitle list come from its public JSON API (CORS open).
 
-export const FRAMEX_ORIGIN = 'https://framextv.xyz';
+// framextv.xyz now answers with a 301 to framextv.cc (seen 2026-10-20), so the frame's real origin
+// is .cc. Load .cc directly; messages from either domain are accepted below.
+export const FRAMEX_ORIGIN = 'https://framextv.cc';
+const FRAMEX_HOSTS = ['framextv.cc', 'framextv.xyz'];
 const FRAMEX_API = 'https://api.framextv.tech/api';
 
 export const frameXEmbedUrl = ({ id, isTV, season, episode, start = 0, provider, customControls = true, title, poster }) => {
@@ -27,12 +30,12 @@ export const frameXEmbedUrl = ({ id, isTV, season, episode, start = 0, provider,
 };
 
 // Trust a message only when it comes FROM THE IFRAME WE CREATED (event.source, the real guarantee:
-// no other window can be that object), from a framextv.xyz address (www. or other subdomains
+// no other window can be that object), from a frameXTV address (www. or other subdomains
 // included, in case it redirects), and with a known shape.
 const isFrameXOrigin = (origin) => {
   try {
     const { protocol, hostname } = new URL(origin);
-    return protocol === 'https:' && (hostname === 'framextv.xyz' || hostname.endsWith('.framextv.xyz'));
+    return protocol === 'https:' && FRAMEX_HOSTS.some((h) => hostname === h || hostname.endsWith(`.${h}`));
   } catch { return false; }
 };
 export const readFrameXMessage = (event, frameWindow) => {

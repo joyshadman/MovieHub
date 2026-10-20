@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { movieApi } from '../services/movieApi';
-import { auth, db } from '../components/firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { auth } from '../components/firebase';
 import Hero from '../components/Hero';
 import MovieRow from '../components/MovieRow';
 import Watch from './Watch';
@@ -42,42 +41,15 @@ const Home = () => {
   const [animeMovies, setAnimeMovies] = useState([]);
   const [romanceMovies, setRomanceMovies] = useState([]);
   const [topInRegion, setTopInRegion] = useState([]);
-  const [history, setHistory] = useState([]);
-
-  const [playingMovie, setPlayingMovie] = useState(null);
+  // { movie, resume? }: the title open in the player, and where to start it.
+  const [playing, setPlaying] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const isLowEnd = useMemo(() => isLowEndDevice(), []);
   const region = useMemo(() => getRegion(), []);
 
-  // 1. AUTH & HISTORY SYNC
-  useEffect(() => {
-    let unsubscribeHistory = null;
-    const unsubscribeAuth = auth.onAuthStateChanged((u) => {
-      setUser(u);
-      if (unsubscribeHistory) {
-        unsubscribeHistory();
-        unsubscribeHistory = null;
-      }
-      if (u) {
-        const historyRef = doc(db, "history", u.uid);
-        unsubscribeHistory = onSnapshot(historyRef, (docSnap) => {
-          if (docSnap.exists()) {
-            const historyData = docSnap.data().items || [];
-            setHistory([...historyData].sort((a, b) => b.watchedAt - a.watchedAt));
-          } else {
-            setHistory([]);
-          }
-        });
-      } else {
-        setHistory([]);
-      }
-    });
-    return () => {
-      if (unsubscribeHistory) unsubscribeHistory();
-      unsubscribeAuth();
-    };
-  }, []);
+  // 1. AUTH (watch history is read by ContinueWatching and written by the player itself)
+  useEffect(() => auth.onAuthStateChanged((u) => setUser(u)), []);
 
   // 2. DATA FETCHING: show the hero once trending loads; fill rows in the
   // background. On low-end devices, secondary rows are fetched in smaller
@@ -156,54 +128,10 @@ const Home = () => {
     navigate(`/${type}/${movie.id}`);
   };
 
-  const handlePlay = async (movie) => {
-    setPlayingMovie(movie);
-
-    if (user) {
-      const historyRef = doc(db, "history", user.uid);
-      const movieType = movie.type || movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
-      const existingItem = history.find(
-        item =>
-          String(item.id) === String(movie.id) &&
-          (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType
-      );
-
-      const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
-
-      // Normalize shape so ContinueWatching & WatchPage see consistent fields
-      const movieData = {
-        ...movie,
-        id: movie.id,
-        type: isTV ? 'tv' : 'movie',
-        title: movie.title || movie.name,
-        poster_path: movie.poster_path || (movie.image?.includes('/t/p/w500')
-          ? movie.image.replace('https://image.tmdb.org/t/p/w500', '')
-          : movie.poster_path ?? null),
-        backdrop_path: movie.backdrop_path || (movie.backdrop?.includes('/t/p/original')
-          ? movie.backdrop.replace('https://image.tmdb.org/t/p/original', '')
-          : movie.backdrop_path ?? null),
-        release_date: movie.release_date || movie.year || null,
-        first_air_date: isTV ? (movie.first_air_date || movie.year) : null,
-        watchedAt: Date.now(),
-        progress: existingItem?.progress || 0,
-        lastSeason: existingItem?.lastSeason || (isTV ? 1 : null),
-        lastEpisode: existingItem?.lastEpisode || (isTV ? 1 : null)
-      };
-
-      const filtered = history.filter(
-        item =>
-          !(String(item.id) === String(movie.id) &&
-            (item.type || (item.first_air_date ? 'tv' : 'movie')) === movieType)
-      );
-      const updated = [movieData, ...filtered].slice(0, 20);
-
-      try {
-        await setDoc(historyRef, { items: updated }, { merge: true });
-      } catch (err) {
-        console.error('History update error:', err);
-      }
-    }
-  };
+  // The player looks up the resume point and records history itself (services/watchHistory.js).
+  const handlePlay = (movie) => setPlaying({ movie });
+  // Continue Watching: straight back into the player at the saved episode and second.
+  const handleResume = (item, resume) => setPlaying({ movie: item, resume });
 
   const rows = [
     { title: 'Trending Now', data: trendingMovies, to: '/movies' },
@@ -227,7 +155,7 @@ const Home = () => {
       <Hero movies={trendingMovies} pending={loading} onPlay={handlePlay} onInfo={handleMovieSelect} label="Trending" />
 
       <div className="relative z-10 -mt-6 md:-mt-10 space-y-10 md:space-y-12">
-        {user && <ContinueWatching user={user} onMovieClick={handleMovieSelect} />}
+        {user && <ContinueWatching user={user} onMovieClick={handleMovieSelect} onResume={handleResume} />}
         {rows.map((row) =>
           row.data && row.data.length > 0 ? (
             <MovieRow key={row.title} title={row.title} movies={row.data} onMovieClick={handleMovieSelect} to={row.to} ranked={row.ranked} />
@@ -236,8 +164,8 @@ const Home = () => {
       </div>
 
       <AnimatePresence>
-        {playingMovie && (
-          <Watch movie={playingMovie} user={user} onClose={() => setPlayingMovie(null)} />
+        {playing && (
+          <Watch movie={playing.movie} resume={playing.resume} user={user} onClose={() => setPlaying(null)} />
         )}
       </AnimatePresence>
     </div>

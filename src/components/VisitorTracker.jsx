@@ -110,7 +110,7 @@ const VisitorCard = ({ u, history, now, onRemove }) => {
   );
 };
 
-// Owner only (the About page renders it for the owner's account; Firestore rules must enforce the
+// Owner only (the Admin page renders it for the owner's account; Firestore rules must enforce the
 // same): every signed in visitor with live status, IP, device, last online and watch history.
 const VisitorTracker = ({ className = '' }) => {
   const [visitors, setVisitors] = useState([]);

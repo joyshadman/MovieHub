@@ -3,18 +3,23 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Play, Pause, RotateCcw, RotateCw, Volume2, Volume1, VolumeX, Maximize, Minimize,
-  SkipForward, ListVideo, Captions, Settings, ServerCrash, RefreshCcw, AlertTriangle,
+  SkipForward, ListVideo, Captions, Settings, ServerCrash, RefreshCcw, AlertTriangle, Users,
 } from 'lucide-react';
 import { Helmet } from 'react-helmet';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { db, auth } from '../components/firebase';
-import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { writePresence, activityFor } from '../services/presence';
 import { STREAM_SOURCES } from '../config/streamSources';
-import { movieApi } from '../services/movieApi';
+import { movieApi, tmdbAuthHeaders, withTmdbKey } from '../services/movieApi';
 import { fetchFrameXProviders, fetchFrameXSubtitles, loadProgress, saveProgress } from '../services/frameX';
 import { loadSubPrefs, saveSubPrefs, loadSubtitleCues, pickTrack } from '../services/subtitles';
+import { recordWatch, findHistoryItem, resumeFrom } from '../services/watchHistory';
+import { createRoom, roomLink } from '../services/watchTogether';
 import { useFrameXPlayer } from '../components/player/useFrameXPlayer';
+import { useWatchTogether } from '../components/player/useWatchTogether';
+import TogetherPanel from '../components/player/TogetherPanel';
 import SettingsMenu from '../components/player/SettingsMenu';
 import EpisodesPanel from '../components/player/EpisodesPanel';
 import MobileWatchDetails from '../components/player/MobileWatchDetails';
@@ -24,6 +29,10 @@ import { Spinner } from '../components/ui/feedback';
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
 const NEXT_UP_SECONDS = 8;
+// Resume points go to Firestore history at most this often while the video plays (spec 0004).
+const HISTORY_SAVE_SEC = 15;
+// Without an answer from history by then, start anyway (S1 E1, or the local resume point).
+const RESUME_LOOKUP_MS = 4000;
 // Sandbox for the player frame: it may run scripts, keep its own storage, go full screen (allowFullScreen)
 // and lock the screen to landscape, but NOT open pop ups or new tabs (no allow-popups) and NOT
 // navigate this page anywhere (no allow-top-navigation). Ad redirects and pop unders are blocked by
@@ -140,8 +149,11 @@ const SeekBar = ({ current, duration, onSeek, rotated = false }) => {
 // Full screen Netflix style player. frameXTV is driven through its postMessage API with our own
 // controls, always: its own player UI is never shown (no controls handoff). Subtitles are ours too.
 // Backup sources keep their own controls and are only used when picked by hand in Settings.
-const WatchPage = ({ movie, user, onClose }) => {
-  const isTV = movie.type === 'tv' || !!movie.first_air_date;
+// `resume` ({ season, episode, t }) starts at a known point (details page, Continue Watching, a
+// Watch Together link). Left out, the player looks the title up in the viewer's history first.
+// `roomId` opens it inside a Watch Together room.
+const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) => {
+  const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
   const title = movie.title || movie.name;
 
   const [sourceId, setSourceId] = useState(STREAM_SOURCES[0].id);
@@ -156,14 +168,19 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [immersive, setImmersive] = useState(false);
   const [vp, setVp] = useState(viewport);
   const [reloadKey, setReloadKey] = useState(0);
-  const [season, setSeason] = useState(1);
-  const [episode, setEpisode] = useState(1);
+  const [season, setSeason] = useState(() => (isTV && resume?.season) || 1);
+  const [episode, setEpisode] = useState(() => (isTV && resume?.episode) || 1);
+  // The frame waits until we know where to start, so it never loads S1 E1 first and then jumps.
+  const [resolved, setResolved] = useState(() => resume !== undefined);
   const [seasonsData, setSeasonsData] = useState([]);
   const [episodesList, setEpisodesList] = useState([]);
   const [currentUser, setCurrentUser] = useState(user || null);
   const [autoSwitch, setAutoSwitch] = useState(true);
   const [failedSources, setFailedSources] = useState([]);
-  const [startAt, setStartAt] = useState(() => (isTV ? 0 : loadProgress({ id: movie.id, isTV })?.t || 0));
+  const [startAt, setStartAt] = useState(() => {
+    if (resume) return Math.max(0, Number(resume.t) || 0);
+    return isTV ? 0 : loadProgress({ id: movie.id, isTV })?.t || 0;
+  });
   const [volume, setVolume] = useState(readVolume);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -236,75 +253,50 @@ const WatchPage = ({ movie, user, onClose }) => {
   }, []);
 
   // --- TMDB SEASONS / EPISODES + HISTORY (existing behavior) ---
-  const getOptions = () => ({
-    method: 'GET',
-    headers: { accept: 'application/json', Authorization: `Bearer ${import.meta.env.VITE_TMDB_READ_TOKEN}` },
-  });
+  const getOptions = () => ({ method: 'GET', headers: tmdbAuthHeaders() });
 
-  const cleanData = (obj) => {
-    const clean = {};
-    Object.keys(obj).forEach((key) => { if (obj[key] !== undefined && obj[key] !== null) clean[key] = obj[key]; });
-    return clean;
-  };
-
-  const addToHistory = async (s = season, e = episode) => {
-    const activeUser = currentUser || user || auth.currentUser;
-    if (!activeUser) return;
-    try {
-      const historyRef = doc(db, 'history', activeUser.uid);
-      const historySnap = await getDoc(historyRef);
-      const historyItem = cleanData({
-        ...movie,
-        id: movie.id,
-        type: isTV ? 'tv' : 'movie',
-        title,
-        watchedAt: Date.now(),
-        lastSeason: isTV ? s : null,
-        lastEpisode: isTV ? e : null,
-        progress: 90,
-      });
-      if (historySnap.exists()) {
-        const existingData = historySnap.data().items || [];
-        const updatedItems = existingData.filter((item) => {
-          const itemType = item.type || (item.first_air_date ? 'tv' : 'movie');
-          return !(String(item.id) === String(movie.id) && itemType === historyItem.type);
-        });
-        await updateDoc(historyRef, { items: [historyItem, ...updatedItems].slice(0, 20) });
-      } else {
-        await setDoc(historyRef, { items: [historyItem] });
+  // Where to start when no `resume` was passed: this title's history item (episode and second),
+  // else this browser's own resume point. History is only written once this is settled, so the
+  // old S1 E1 default can never overwrite the episode you were really on.
+  const uid = (currentUser || user || auth.currentUser)?.uid || null;
+  useEffect(() => {
+    if (resolved) return undefined;
+    let cancelled = false;
+    const finish = () => { if (!cancelled) setResolved(true); };
+    const giveUp = setTimeout(finish, RESUME_LOOKUP_MS);
+    (async () => {
+      if (uid) {
+        try {
+          const snap = await getDoc(doc(db, 'history', uid));
+          const from = resumeFrom(findHistoryItem(snap.exists() ? snap.data().items || [] : [], movie.id, isTV ? 'tv' : 'movie'));
+          if (from && !cancelled) {
+            const s = isTV ? from.season : null;
+            const e = isTV ? from.episode : null;
+            if (isTV) { setSeason(s); setEpisode(e); }
+            const local = loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0;
+            setStartAt(from.t || local);
+          }
+        } catch (err) { console.error('Resume lookup:', err); }
+      } else if (isTV) {
+        setStartAt(loadProgress({ id: movie.id, isTV, season: 1, episode: 1 })?.t || 0);
       }
-    } catch (err) { console.error('Error updating history:', err); }
-  };
+      finish();
+    })();
+    return () => { cancelled = true; clearTimeout(giveUp); };
+  }, [movie.id, uid, resolved]);
 
   useEffect(() => {
-    const initLoad = async () => {
-      const activeUser = currentUser || user || auth.currentUser;
-      if (activeUser && isTV) {
-        try {
-          const snap = await getDoc(doc(db, 'history', activeUser.uid));
-          if (snap.exists()) {
-            const item = snap.data().items?.find((i) => String(i.id) === String(movie.id));
-            if (item?.lastSeason) {
-              const s = item.lastSeason;
-              const e = item.lastEpisode || 1;
-              setSeason(s);
-              setEpisode(e);
-              setStartAt(loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0);
-            }
-          }
-        } catch (err) { console.error('Resume Error:', err); }
-      }
-      if (isTV) {
-        try {
-          const res = await fetch(`https://api.themoviedb.org/3/tv/${movie.id}`, getOptions());
-          const data = await res.json();
-          setSeasonsData(data.seasons?.filter((s) => s.season_number > 0) || []);
-        } catch (err) { console.error(err); }
-      }
-      addToHistory(season, episode);
-    };
-    initLoad();
-  }, [movie.id, currentUser]);
+    if (!isTV) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(withTmdbKey(`https://api.themoviedb.org/3/tv/${movie.id}`), getOptions());
+        const data = await res.json();
+        if (!cancelled) setSeasonsData(data.seasons?.filter((s) => s.season_number > 0) || []);
+      } catch (err) { console.error(err); }
+    })();
+    return () => { cancelled = true; };
+  }, [movie.id]);
 
   useEffect(() => {
     if (!isTV) return undefined;
@@ -318,7 +310,14 @@ const WatchPage = ({ movie, user, onClose }) => {
     return () => { cancelled = true; };
   }, [movie.id, season]);
 
-  useEffect(() => { if (movie.id) addToHistory(season, episode); }, [season, episode]);
+  // History: the title and episode as soon as it starts, then the resume point while it plays
+  // (frameXTV only; backups report no time) and once more on close.
+  const recordRef = useRef(null);
+  recordRef.current = (t, duration, s = season, e = episode) => {
+    if (!uid || !resolved) return;
+    recordWatch(uid, movie, { season: s, episode: e, t, duration }).catch((err) => console.error('History update:', err));
+  };
+  useEffect(() => { if (resolved && uid && movie.id) recordRef.current(); }, [resolved, uid, movie.id, season, episode]);
 
   // --- TRACKER (existing behavior) ---
   useEffect(() => {
@@ -353,6 +352,29 @@ const WatchPage = ({ movie, user, onClose }) => {
   useEffect(() => {
     if (isFrameX && player.currentTime > 0) saveProgress(progressRef, player.currentTime, player.duration);
   }, [progressBucket]);
+  const historyBucket = Math.floor(player.currentTime / HISTORY_SAVE_SEC);
+  const lastPlayback = useRef(null);
+  useEffect(() => {
+    if (!isFrameX || !(player.duration > 0) || player.ended) return;
+    if (player.currentTime > 5) recordRef.current(player.currentTime, player.duration);
+  }, [historyBucket]);
+  // Ended: the resume point clears (recordWatch treats the last 90 s as finished).
+  useEffect(() => {
+    if (!isFrameX || !player.ended || !(player.duration > 0)) return;
+    lastPlayback.current = null;
+    recordRef.current(player.duration, player.duration);
+  }, [player.ended]);
+  // Closing the player: save exactly where it stopped, for the episode it was on.
+  useEffect(() => {
+    if (isFrameX && player.duration > 0 && !player.ended && player.currentTime > 5) {
+      lastPlayback.current = { t: player.currentTime, duration: player.duration, season, episode };
+    }
+  }, [player.currentTime]);
+  useEffect(() => { lastPlayback.current = null; }, [season, episode]);
+  useEffect(() => () => {
+    const last = lastPlayback.current;
+    if (last) recordRef.current(last.t, last.duration, last.season, last.episode);
+  }, []);
 
   // --- BACKUP SOURCES: their iframe must load within BACKUP_TIMEOUT_MS, else back to our player ---
   useEffect(() => {
@@ -371,15 +393,71 @@ const WatchPage = ({ movie, user, onClose }) => {
   // Stable callbacks so the memoized episode panel does not re-render on every playback update.
   const closePanel = useCallback(() => setPanel(null), []);
 
-  const goToEpisode = useCallback((s, e) => {
+  // `t` given (Watch Together): start there instead of this browser's resume point.
+  const loadEpisode = useCallback((s, e, t) => {
     setSeason(s);
     setEpisode(e);
-    setStartAt(loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0);
+    setStartAt(Number.isFinite(t) ? Math.max(0, t) : loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0);
     setNextUp(null);
     setBackupLoading(true);
     setShieldActive(true);
     setPanel(null);
   }, [movie.id, isTV]);
+
+  // --- WATCH TOGETHER (spec 0005) ---
+  const [roomId, setRoomId] = useState(joinRoomId);
+  const [showTogether, setShowTogether] = useState(!!joinRoomId);
+  const [startingRoom, setStartingRoom] = useState(false);
+  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, onEpisode: loadEpisode });
+  const inRoom = !!together.room && !together.hostLeft;
+  // A person's own play, pause, seek or episode change goes to the room first. Members who may not
+  // control right now (host only mode) are held with a note; everyone else acts as usual.
+  const share = (action, state) => {
+    if (together.act(action, state)) return true;
+    toast('The host controls playback in this room. They can let everyone control in the room sheet.', { id: 'host-only', icon: '👥' });
+    return false;
+  };
+  const startTogether = async () => {
+    if (roomId) { setShowTogether(true); return; }
+    if (!currentUser) { toast.error('Sign in to watch together'); return; }
+    setStartingRoom(true);
+    try {
+      const id = await createRoom(currentUser, movie, {
+        season: isTV ? season : null,
+        episode: isTV ? episode : null,
+        position: player.duration > 0 ? player.currentTime : startAt,
+        playing: !player.paused,
+      });
+      setRoomId(id);
+      setShowTogether(true);
+      navigator.clipboard?.writeText(roomLink(id)).then(() => toast.success('Room ready. Invite link copied'), () => toast.success('Room ready. Share the invite link'));
+    } catch (err) {
+      console.error('Create room:', err);
+      toast.error('Could not start a room. Check your connection and try again.');
+    } finally {
+      setStartingRoom(false);
+    }
+  };
+  const leaveTogether = () => { setRoomId(null); setShowTogether(false); };
+  // Jump to the host: a seek when our controls drive the video, else a reload at that second.
+  const syncNow = () => {
+    const t = together.expectedTime();
+    if (together.room?.season && (together.room.season !== season || together.room.episode !== episode)) { loadEpisode(together.room.season, together.room.episode, t); return; }
+    if (custom && player.duration > 0) {
+      player.seek(t);
+      if (together.room?.playing) player.play();
+    } else {
+      setStartAt(t);
+      setReloadKey((k) => k + 1);
+    }
+  };
+  useEffect(() => { if (together.missing && roomId) { toast.error('That Watch Together room is gone'); leaveTogether(); } }, [together.missing]);
+
+  // In a room everyone starts the new episode from the top together.
+  const goToEpisode = useCallback((s, e) => {
+    if (!share('episode', { season: s, episode: e, position: 0, playing: true })) return;
+    loadEpisode(s, e, inRoom ? 0 : undefined);
+  }, [loadEpisode, together.act, inRoom]);
 
   const handleNextEpisode = useCallback(() => {
     if (episode < episodesList.length) goToEpisode(season, episode + 1);
@@ -391,7 +469,8 @@ const WatchPage = ({ movie, user, onClose }) => {
   const [endedFor, setEndedFor] = useState(null);
   if (ended && endedFor !== loadKey) {
     setEndedFor(loadKey);
-    if (hasNext) setNextUp(NEXT_UP_SECONDS);
+    // In a room only the host counts down; the others move on when the room does.
+    if (hasNext && (!inRoom || together.isHost)) setNextUp(NEXT_UP_SECONDS);
   }
   // frameXTV starts the next episode inside its frame on its own; hold it so our countdown (and our
   // episode, history and tracker state) stays in charge.
@@ -626,7 +705,18 @@ const WatchPage = ({ movie, user, onClose }) => {
   const uiVisible = showUI || pinned;
 
   const flashIcon = (name) => { setFlash({ name, id: Date.now() }); };
-  const togglePlay = () => { flashIcon(player.paused ? 'play' : 'pause'); player.toggle(); };
+  const togglePlay = () => {
+    const willPlay = player.paused;
+    if (!share(willPlay ? 'play' : 'pause', { playing: willPlay })) return;
+    flashIcon(willPlay ? 'play' : 'pause');
+    player.toggle();
+  };
+  const seekTo = (t) => {
+    const target = Math.max(0, player.duration ? Math.min(t, player.duration - 0.5) : t);
+    if (!share('seek', { position: target })) return;
+    player.seek(target);
+  };
+  const seekBy = (seconds) => seekTo(player.currentTime + seconds);
 
   // Touch: a tap shows or hides the controls (it never pauses by accident); a double tap on the
   // left or right side jumps 10 seconds, like the Netflix and YouTube apps.
@@ -640,7 +730,7 @@ const WatchPage = ({ movie, user, onClose }) => {
     const now = Date.now();
     if (side && lastTap.current.side === side && now - lastTap.current.t < 320) {
       flashIcon(side);
-      player.seekBy(side === 'fwd' ? 10 : -10);
+      seekBy(side === 'fwd' ? 10 : -10);
       lastTap.current = { t: 0, side: null };
       wake();
       return;
@@ -664,8 +754,8 @@ const WatchPage = ({ movie, user, onClose }) => {
       }
       if (!custom) return;
       if (k === ' ' || k === 'k') { if (k === ' ' && e.target?.closest?.('button, [role="slider"]')) return; e.preventDefault(); togglePlay(); }
-      else if (k === 'arrowright' || k === 'l') { e.preventDefault(); flashIcon('fwd'); player.seekBy(10); }
-      else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); flashIcon('back'); player.seekBy(-10); }
+      else if (k === 'arrowright' || k === 'l') { e.preventDefault(); flashIcon('fwd'); seekBy(10); }
+      else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); flashIcon('back'); seekBy(-10); }
       else if (k === 'arrowup') { e.preventDefault(); applyVolume(volume + 0.1); }
       else if (k === 'arrowdown') { e.preventDefault(); applyVolume(volume - 0.1); }
       else if (k === 'm') toggleMute();
@@ -717,6 +807,20 @@ const WatchPage = ({ movie, user, onClose }) => {
   if (inline && panel === 'episodes') setPanel(null); // the list is on the page in this layout
   const detailsNotice = !isFrameX ? `${source.name} is a backup source with its own player.` : null;
 
+  const liveCount = together.members.filter((m) => m.live).length;
+  const togetherButton = (
+    <Ctl
+      label={roomId ? `Watch together, ${liveCount} here` : 'Watch together'}
+      onClick={() => (roomId ? setShowTogether((v) => !v) : startTogether())}
+      active={!!roomId}
+      disabled={startingRoom}
+      aria-pressed={!!roomId}
+    >
+      {startingRoom ? <Spinner size={18} /> : <Users size={20} aria-hidden="true" />}
+      {roomId && liveCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold">{liveCount}</span>}
+    </Ctl>
+  );
+
   const settingsProps = {
     onClose: closePanel,
     // Phones and tablets: only sources that run sandboxed (no pop ups, no redirects). VidLink and VidSrc
@@ -767,6 +871,7 @@ const WatchPage = ({ movie, user, onClose }) => {
             <p className="truncate text-sm font-semibold leading-tight">{title}</p>
             <p className="truncate text-[11px] text-white/55">{subtitle}</p>
           </div>
+          <span className="ml-auto">{togetherButton}</span>
         </div>
       )}
 
@@ -789,7 +894,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         </AnimatePresence>
 
         {/* No playable stream: the frame is unloaded so nothing keeps playing out of sight */}
-        {!noStream && (
+        {!noStream && resolved && (
           <iframe
             ref={frameRef}
             key={loadKey}
@@ -899,13 +1004,13 @@ const WatchPage = ({ movie, user, onClose }) => {
         {/* Touch: Netflix style center row (back 10, play / pause, forward 10) while controls show */}
         {custom && touch && uiVisible && !loading && !player.ended && !player.failed && nextUp === null && !panel && !frameTaps && !fsHint && (
           <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${inline ? 'gap-8' : 'gap-10'}`}>
-            <button type="button" onClick={() => { flashIcon('back'); player.seekBy(-10); wake(); }} aria-label="Back 10 seconds" className={`pointer-events-auto relative flex items-center ${inline ? 'h-12 w-12' : 'h-14 w-14'} justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform`}>
+            <button type="button" onClick={() => { flashIcon('back'); seekBy(-10); wake(); }} aria-label="Back 10 seconds" className={`pointer-events-auto relative flex items-center ${inline ? 'h-12 w-12' : 'h-14 w-14'} justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform`}>
               <RotateCcw size={inline ? 24 : 28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
             </button>
             <button type="button" onClick={() => { togglePlay(); wake(); }} aria-label={player.paused ? 'Play' : 'Pause'} className={`pointer-events-auto flex items-center justify-center rounded-full bg-white/15 ring-1 ring-white/25 active:scale-90 motion-safe:transition-transform ${inline ? 'h-[60px] w-[60px]' : 'h-[72px] w-[72px]'}`}>
               {player.paused ? <Play size={34} className="ml-1 fill-white" aria-hidden="true" /> : <Pause size={34} className="fill-white" aria-hidden="true" />}
             </button>
-            <button type="button" onClick={() => { flashIcon('fwd'); player.seekBy(10); wake(); }} aria-label="Forward 10 seconds" className={`pointer-events-auto relative flex items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform ${inline ? 'h-12 w-12' : 'h-14 w-14'}`}>
+            <button type="button" onClick={() => { flashIcon('fwd'); seekBy(10); wake(); }} aria-label="Forward 10 seconds" className={`pointer-events-auto relative flex items-center justify-center rounded-full bg-black/40 active:scale-90 motion-safe:transition-transform ${inline ? 'h-12 w-12' : 'h-14 w-14'}`}>
               <RotateCw size={inline ? 24 : 28} aria-hidden="true" /><span className="absolute mt-0.5 text-[9px] font-bold">10</span>
             </button>
           </div>
@@ -968,6 +1073,7 @@ const WatchPage = ({ movie, user, onClose }) => {
               </div>
             </div>
             <div className="pointer-events-auto flex shrink-0 items-center gap-1">
+              {togetherButton}
               {(!custom || frameTaps) && !inline && (
                 <>
                   {isTV && <Ctl label="Episodes" onClick={() => setPanel(panel === 'episodes' ? null : 'episodes')} active={panel === 'episodes'}><ListVideo size={20} aria-hidden="true" /></Ctl>}
@@ -1005,7 +1111,7 @@ const WatchPage = ({ movie, user, onClose }) => {
         {custom && !frameTaps && !(inline && nextUp !== null) && (
           <div className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/50 to-transparent motion-safe:transition-opacity ${inline ? 'px-2 pt-10 pb-0.5' : 'px-3 sm:px-6 pt-16 pb-3 sm:pb-5'} duration-300 ${uiVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
             <div className="flex items-center gap-3">
-              <SeekBar rotated={rotated} current={player.currentTime} duration={player.duration} onSeek={(t) => { player.seek(t); wake(); }} />
+              <SeekBar rotated={rotated} current={player.currentTime} duration={player.duration} onSeek={(t) => { seekTo(t); wake(); }} />
               <span className="shrink-0 text-xs sm:text-sm font-medium tabular-nums text-white/80">{player.duration ? `-${fmt(remaining)}` : '--:--'}</span>
             </div>
             <div className="mt-1 flex items-center justify-between gap-1">
@@ -1015,8 +1121,8 @@ const WatchPage = ({ movie, user, onClose }) => {
                 </Ctl>
                 {!touch && (
                   <>
-                    <Ctl label="Back 10 seconds" onClick={() => { flashIcon('back'); player.seekBy(-10); }}><RotateCcw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
-                    <Ctl label="Forward 10 seconds" onClick={() => { flashIcon('fwd'); player.seekBy(10); }}><RotateCw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
+                    <Ctl label="Back 10 seconds" onClick={() => { flashIcon('back'); seekBy(-10); }}><RotateCcw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
+                    <Ctl label="Forward 10 seconds" onClick={() => { flashIcon('fwd'); seekBy(10); }}><RotateCw size={22} aria-hidden="true" /><span className="absolute text-[8px] font-bold mt-0.5">10</span></Ctl>
                   </>
                 )}
                 <div className="group/vol flex items-center">
@@ -1084,7 +1190,7 @@ const WatchPage = ({ movie, user, onClose }) => {
               <p className="text-sm text-white/60">You finished</p>
               <h2 className={`mt-1 font-display uppercase ${inline ? 'text-3xl' : 'text-5xl'}`}>{title}</h2>
               <div className={`flex justify-center gap-3 ${inline ? 'mt-3' : 'mt-6'}`}>
-                <button type="button" onClick={() => { player.seek(0); player.play(); }} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RotateCcw size={16} aria-hidden="true" /> Watch again</button>
+                <button type="button" onClick={() => { if (!share('seek', { position: 0, playing: true })) return; player.seek(0); player.play(); }} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RotateCcw size={16} aria-hidden="true" /> Watch again</button>
                 <button type="button" onClick={onClose} className="h-11 rounded-full border border-white/20 px-5 text-sm font-semibold hover:bg-white/10">Back to browsing</button>
               </div>
             </div>
@@ -1126,6 +1232,19 @@ const WatchPage = ({ movie, user, onClose }) => {
             <div className="pointer-events-auto absolute inset-0 bg-black/50" aria-hidden="true" />
             <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position="pointer-events-auto inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+12px)]" />
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showTogether && roomId && together.room && (
+          <TogetherPanel
+            key="together"
+            together={together}
+            user={currentUser}
+            onClose={() => setShowTogether(false)}
+            onLeave={leaveTogether}
+            onSyncNow={syncNow}
+          />
         )}
       </AnimatePresence>
     </Motion.div>

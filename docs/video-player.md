@@ -23,8 +23,11 @@ Details, Home and Browse. Routes did not change.
 
 ## Embed URLs
 
-- Movie: `https://framextv.xyz/embed/{tmdbId}`
-- TV and anime (TMDB ids): `https://framextv.xyz/embed/{tmdbId}/{season}/{episode}`
+- Movie: `https://framextv.cc/embed/{tmdbId}`
+- TV and anime (TMDB ids): `https://framextv.cc/embed/{tmdbId}/{season}/{episode}`
+
+framextv.xyz now sends a 301 redirect to framextv.cc (seen 2026-10-20), so we load `.cc` directly
+and accept messages from both domains. If messages stop arriving, check where the embed redirects first.
 
 URL parameters we use: `autoplay=1`, `controls=0` (hides frameXTV's own controls), `t` (start
 second, for resume), `provider` (a frameXTV server), `title`, `poster`. frameXTV also reads `muted`
@@ -71,7 +74,7 @@ so on screen and offers "back to our player".
 
 `readFrameXMessage` only accepts a message when all three hold:
 
-1. `event.origin === 'https://framextv.xyz'`,
+1. `event.origin` is `https://framextv.cc` or `https://framextv.xyz` (or a subdomain of either),
 2. `event.source` is the iframe we created (not any other frame), and
 3. the data has a known `frameXTV:*` event with numeric fields.
 

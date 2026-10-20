@@ -4,24 +4,29 @@ const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
 // Missing images return null; components render fallbackGradient() instead (spec 0001).
 const FALLBACK = null;
 
-const MOCK_FALLBACKS = [
-  {
-    id: "mock1",
-    title: "Interstellar",
-    backdrop_path: "/xJHbt7SqcBrUrGv8S78p8e49VQC.jpg",
-    poster_path: "/gEU2QniE6E77vl6P3pG2G1LpEbA.jpg",
-    overview: "A team of explorers travel through a wormhole in space in an attempt to ensure humanity's survival.",
-    release_date: "2014-11-05",
-    vote_average: 8.7
-  }
-];
+// TMDB auth: the v4 read token (VITE_TMDB_READ_TOKEN) when it is set, else the v3 key
+// (VITE_TMDB_API_KEY) as an api_key query param. Never both: a "Bearer undefined" header makes
+// TMDB answer 401 even with a valid key.
+const READ_TOKEN = import.meta.env.VITE_TMDB_READ_TOKEN;
+const API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+
+export const tmdbAuthHeaders = () => ({
+  accept: 'application/json',
+  ...(READ_TOKEN ? { Authorization: `Bearer ${READ_TOKEN}` } : {}),
+});
+
+export const withTmdbKey = (url) => {
+  if (READ_TOKEN || !API_KEY || !String(url).startsWith(BASE_URL)) return url;
+  const u = new URL(url);
+  u.searchParams.set('api_key', API_KEY);
+  return u.toString();
+};
+
+const tmdbFetch = (url, options) => fetch(withTmdbKey(url), options);
 
 const getOptions = () => ({
   method: 'GET',
-  headers: {
-    accept: 'application/json',
-    Authorization: `Bearer ${import.meta.env.VITE_TMDB_READ_TOKEN}`
-  }
+  headers: tmdbAuthHeaders(),
 });
 
 const formatItem = (item, typeOverride = null) => {
@@ -64,7 +69,7 @@ export const movieApi = {
     const cacheKey = `${type}:${id}`;
     if (!trailerCache.has(cacheKey)) {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const request = fetch(`${BASE_URL}/${endpoint}/${id}/videos`, getOptions())
+      const request = tmdbFetch(`${BASE_URL}/${endpoint}/${id}/videos`, getOptions())
         .then((res) => (res.ok ? res.json() : { results: [] }))
         .then((data) => {
           const vids = (data.results || []).filter((v) => v.site === "YouTube");
@@ -84,14 +89,14 @@ export const movieApi = {
   getDetails: async (type, id) => {
     try {
       let endpoint = type === "tv" ? "tv" : "movie";
-      let response = await fetch(
+      let response = await tmdbFetch(
         `${BASE_URL}/${endpoint}/${id}?append_to_response=credits,similar,videos,images&include_image_language=en,null`, 
         getOptions()
       );
 
       if (response.status === 404) {
         endpoint = endpoint === "tv" ? "movie" : "tv";
-        response = await fetch(
+        response = await tmdbFetch(
           `${BASE_URL}/${endpoint}/${id}?append_to_response=credits,similar,videos,images&include_image_language=en,null`, 
           getOptions()
         );
@@ -138,13 +143,13 @@ export const movieApi = {
 
   getTrending: async (type = "movie") => {
     try {
-      const response = await fetch(`${BASE_URL}/trending/${type}/day`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/trending/${type}/day`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
-      if (!data.results || data.results.length === 0) return MOCK_FALLBACKS.map(i => formatItem(i, type));
+      if (!data.results || data.results.length === 0) return [];
       return data.results.map((item) => formatItem(item, type));
     } catch {
-      return MOCK_FALLBACKS.map(i => formatItem(i, type));
+      return []; // the row hides and the hero picks a genre instead of a fake card
     }
   },
 
@@ -152,7 +157,7 @@ export const movieApi = {
   getTopRated: async (type = "movie") => {
     try {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/${endpoint}/top_rated`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/${endpoint}/top_rated`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return {
@@ -168,7 +173,7 @@ export const movieApi = {
   getPopular: async (type = "movie") => {
     try {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/${endpoint}/popular`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/${endpoint}/popular`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return {
@@ -182,7 +187,7 @@ export const movieApi = {
 
   search: async (query, page = 1) => {
     try {
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/search/multi?query=${encodeURIComponent(query)}&page=${page}`, 
         getOptions()
       );
@@ -198,7 +203,7 @@ export const movieApi = {
 
   getByGenre: async (genreId, type = "movie", page = 1) => {
     try {
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/discover/${type}?with_genres=${genreId}&sort_by=popularity.desc&page=${page}`, 
         getOptions()
       );
@@ -216,7 +221,7 @@ export const movieApi = {
   getBollywood: async (page = 1) => {
     try {
       // Using Hindi language and India origin country filters
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/discover/movie?with_original_language=hi&with_origin_country=IN&sort_by=popularity.desc&page=${page}`, 
         getOptions()
       );
@@ -233,7 +238,7 @@ export const movieApi = {
   // BANGLA MOVIES SPECIALIZED DISCOVER
   getBanglaMovies: async (page = 1) => {
     try {
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/discover/movie?with_original_language=bn&sort_by=popularity.desc&page=${page}`,
         getOptions()
       );
@@ -251,7 +256,7 @@ export const movieApi = {
   getAnime: async (type = "tv", page = 1) => {
     try {
       const endpoint = type === "movie" ? "movie" : "tv";
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/discover/${endpoint}?with_genres=16&with_original_language=ja&sort_by=popularity.desc&page=${page}`,
         getOptions()
       );
@@ -272,7 +277,7 @@ export const movieApi = {
       const yearParam = year ? `&primary_release_year=${year}` : '';
       const endpoint = type === 'all' ? 'movie' : type;
 
-      const response = await fetch(
+      const response = await tmdbFetch(
         `${BASE_URL}/discover/${endpoint}?sort_by=popularity.desc${genreParam}${yearParam}&page=${page}`,
         getOptions()
       );
@@ -289,10 +294,10 @@ export const movieApi = {
   getExternalIds: async (id, type) => {
     try {
       let endpoint = type === "tv" ? "tv" : "movie";
-      let response = await fetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
+      let response = await tmdbFetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
       if (response.status === 404) {
         endpoint = endpoint === "tv" ? "movie" : "tv";
-        response = await fetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
+        response = await tmdbFetch(`${BASE_URL}/${endpoint}/${id}/external_ids`, getOptions());
       }
       const data = await response.json();
       return data.imdb_id || null; 
@@ -325,7 +330,7 @@ export const movieApi = {
     if (originCountry) params.set("with_origin_country", originCountry);
 
     try {
-      const response = await fetch(`${BASE_URL}/discover/${endpoint}?${params}`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/discover/${endpoint}?${params}`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return {
@@ -343,7 +348,7 @@ export const movieApi = {
   getGenreCount: async (genreId, type = "movie") => {
     try {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/discover/${endpoint}?with_genres=${genreId}&vote_count.gte=10`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/discover/${endpoint}?with_genres=${genreId}&vote_count.gte=10`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return data.total_results || 0;
@@ -355,7 +360,7 @@ export const movieApi = {
   // MOST POPULAR IN A COUNTRY (Top 10 row)
   getPopularInRegion: async (region = "US") => {
     try {
-      const response = await fetch(`${BASE_URL}/movie/popular?region=${encodeURIComponent(region)}`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/movie/popular?region=${encodeURIComponent(region)}`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return (data.results || []).slice(0, 10).map(item => formatItem(item, "movie"));
@@ -368,7 +373,7 @@ export const movieApi = {
   getReviews: async (type, id) => {
     try {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/${endpoint}/${id}/reviews`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/${endpoint}/${id}/reviews`, getOptions());
       if (!response.ok) throw new Error("API Failure");
       const data = await response.json();
       return (data.results || []).map(r => ({
@@ -388,7 +393,7 @@ export const movieApi = {
   getSeason: (tvId, season) => {
     const key = `${tvId}:${season}`;
     if (!seasonCache.has(key)) {
-      const request = fetch(`${BASE_URL}/tv/${tvId}/season/${season}`, getOptions())
+      const request = tmdbFetch(`${BASE_URL}/tv/${tvId}/season/${season}`, getOptions())
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Season ${season} failed`))))
         .then((data) => (data.episodes || []).map((ep) => ({
           id: ep.id,
@@ -411,7 +416,7 @@ export const movieApi = {
   getCredits: async (type, id) => {
     try {
       const endpoint = type === "tv" ? "tv" : "movie";
-      const response = await fetch(`${BASE_URL}/${endpoint}/${id}/credits`, getOptions());
+      const response = await tmdbFetch(`${BASE_URL}/${endpoint}/${id}/credits`, getOptions());
       const data = await response.json();
       return (data.cast || []).slice(0, 10).map(actor => ({
         name: actor.name,

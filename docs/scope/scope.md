@@ -41,6 +41,8 @@ Ground rules for every feature in this pass: no feature, route, auth flow or dat
 | 15 | Reviews on title details | Slice 4 | in-progress |
 | 16 | System states: 404, empty, error, popups, toasts | Slice 4 | in-progress |
 | 17 | Global style switch | Slice 4 | in-progress |
+| 18 | AI recommendation chat | Slice 5 | in-progress |
+| 19 | Watch Together | Slice 5 | in-progress |
 
 ## Already built (enrolled for context)
 
@@ -218,6 +220,31 @@ Once every page uses the new tokens, flip the app wide defaults: default font to
 - [x] Build it: `/develop global style switch`
 - [ ] Verify it: `/check verify global style switch`
 code in `src/index.css`, `index.html`
+
+## Slice 5: Watch features
+
+### 18. AI recommendation chat · in-progress
+An "Ask AI" chat that suggests only movies and shows from what each signed in user types, watched and saved, on free OpenRouter models, with a small daily allowance set on the Admin page and one saved chat per user.
+**Done when:** picks show as real title cards, off topic questions are refused, the daily limit holds and can not be cheated, the owner is unlimited, only free models are ever called, and the chat survives a refresh on any device.
+- [x] Design it (spec): `/architect AI recommendation chat`
+- [ ] Build it: `/develop AI recommendation chat`
+   - [x] Server: free only model chain, busy and resting messages, limit from the Admin page, owner exemption (AC-3, AC-5, AC-6, AC-7, AC-8)
+   - [ ] Firestore rules for usage, saved chats and the limit field (AC-4, AC-6, AC-9)
+   - [ ] Browser: live counter, saved chat with Clear chat, Admin limit field; recheck picks, refusal, taste, key and sign in (AC-1, AC-2, AC-3, AC-5, AC-6, AC-9, AC-10, AC-11, AC-12)
+- [ ] Verify it: `/check verify AI recommendation chat`
+Spec [0006](../specs/0006-ai-recommendation-chat/index.md) · code in `api/recommend.js`, `src/services/aiChat.js`, `src/components/AiChat.jsx`, `src/Pages/Admin.jsx`, `src/services/siteConfig.js`, `src/App.jsx`, `vite.config.js`
+
+### 19. Watch Together · in-progress
+Signed in friends watch the same movie or episode in sync from a shared link, with members and chat beside the player. The host lets each guest in, and the whole room follows one server, all on Firestore within the free plan.
+**Done when:** guests wait in a lobby until the host lets them in, approvals stick and denials block, a room holds at most 10, playback, episode and server stay in sync, a host refresh does not end the room, rooms end on request or after 12 h idle, and every tamper attempt is refused.
+- [x] Design it (spec): `/architect watch together`
+- [ ] Build it: `/develop watch together`
+   - [ ] Fewer writes and host away or return (AC-9, AC-14)
+   - [ ] Lobby: waiting screen, knock, let in or deny, the cap of 10, remove member (AC-2, AC-3, AC-4, AC-5, AC-10)
+   - [ ] Shared server and room end (AC-6, AC-7, AC-8, AC-11)
+   - [ ] Firestore rules published, and the built behavior rechecked (AC-1, AC-6, AC-7, AC-8, AC-12, AC-13)
+- [ ] Verify it: `/check verify watch together`
+Spec [0005](../specs/0005-watch-together/index.md) · code in `src/services/watchTogether.js`, `src/components/player/useWatchTogether.js`, `src/components/player/TogetherPanel.jsx`, `src/Pages/TogetherRoom.jsx`, `src/Pages/Watch.jsx` · from spec 0005
 
 ## Deferred
 Out of scope for the current build pass, kept so the plan stays honest.

@@ -11,6 +11,10 @@ import DeviceModal from './components/DeviceModal';
 import Footer from './components/Footer';
 import { WatchlistProvider } from './context/WatchlistContext';
 import { Spinner } from './components/ui/feedback';
+import Maintenance from './components/Maintenance';
+import AiChat from './components/AiChat';
+import { subscribeSiteConfig } from './services/siteConfig';
+import { isOwner } from './config/owner';
 
 const Home = lazy(() => import('./Pages/Home'));
 const SearchPage = lazy(() => import('./Pages/Search'));
@@ -25,6 +29,8 @@ const Login = lazy(() => import('./Pages/auth/Login'));
 const Signup = lazy(() => import('./Pages/auth/Signup'));
 const ForgotPassword = lazy(() => import('./Pages/auth/ForgotPassword'));
 const NotFound = lazy(() => import('./Pages/NotFound'));
+const Admin = lazy(() => import('./Pages/Admin'));
+const TogetherRoom = lazy(() => import('./Pages/TogetherRoom'));
 
 const AUTH_PATHS = ['/login', '/signup', '/forgot-password'];
 
@@ -46,7 +52,7 @@ const ScrollToTop = () => {
   return null;
 };
 
-const AppContent = ({ user, isAppReady }) => {
+const AppContent = ({ user, authReady, site, isAppReady }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -108,6 +114,8 @@ const AppContent = ({ user, isAppReady }) => {
         <Route path="/categories/:genreId" element={<CategoryPage />} />
         <Route path="/collection/:slug" element={<CollectionPage />} />
         <Route path="/about" element={<About user={user} />} />
+        <Route path="/admin" element={<Admin user={user} site={site} />} />
+        <Route path="/together/:roomId" element={<TogetherRoom user={user} />} />
         <Route path="/details/:type/:id" element={<MovieDetails />} />
         <Route path="/movie/:id" element={<MovieDetails />} />
         <Route path="/tv/:id" element={<MovieDetails />} />
@@ -120,9 +128,23 @@ const AppContent = ({ user, isAppReady }) => {
     </div>
   );
 
+  // Maintenance (spec 0003): everyone but the owner gets the maintenance screen. The sign in pages
+  // stay reachable so the owner can get in. Nothing shows until auth and the switch are known, so
+  // the owner never sees a flash of it and visitors never see a flash of the site.
+  const owner = isOwner(user);
+  if (site.maintenance && !owner && !isAuthPage) {
+    return authReady ? <Maintenance message={site.message} /> : <div className="min-h-screen bg-canvas" />;
+  }
+  if (!site.loaded && !isAuthPage) return <div className="min-h-screen bg-canvas" />;
+
   return (
     <div className="min-h-screen bg-canvas text-white font-body">
       <ScrollToTop />
+      {owner && site.maintenance && (
+        <a href="/admin" onClick={(e) => { e.preventDefault(); navigate('/admin'); }} className="fixed left-1/2 top-[calc(env(safe-area-inset-top)+8px)] z-[140] -translate-x-1/2 rounded-full border border-accent/50 bg-accent/90 px-4 py-1.5 text-xs font-semibold text-white shadow-card backdrop-blur-md">
+          Maintenance is on · only you can see the site
+        </a>
+      )}
       {isAuthPage ? (
         routes
       ) : (
@@ -132,6 +154,7 @@ const AppContent = ({ user, isAppReady }) => {
             {routes}
             <Footer />
           </main>
+          <AiChat key={user?.uid || 'guest'} user={user} limit={site.aiDailyLimit} />
         </>
       )}
     </div>
@@ -140,6 +163,8 @@ const AppContent = ({ user, isAppReady }) => {
 
 const App = () => {
   const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [site, setSite] = useState({ maintenance: false, message: '', loaded: false });
   const [showLoading, setShowLoading] = useState(() => {
     return !sessionStorage.getItem('hasLoadedBefore');
   });
@@ -149,8 +174,16 @@ const App = () => {
 
   useEffect(() => {
     getRedirectResult(auth).catch((err) => console.error('Redirect sign-in:', err));
-    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    const unsubscribe = onAuthStateChanged(auth, (u) => { setUser(u); setAuthReady(true); });
     return () => unsubscribe();
+  }, []);
+
+  // Site switches (maintenance) live from config/site; fails open, see services/siteConfig.js.
+  // A slow or offline read never holds the site back for more than a few seconds.
+  useEffect(() => {
+    const unsubscribe = subscribeSiteConfig(setSite);
+    const fallback = setTimeout(() => setSite((s) => (s.loaded ? s : { ...s, loaded: true })), 4000);
+    return () => { unsubscribe(); clearTimeout(fallback); };
   }, []);
 
   useEffect(() => {
@@ -195,7 +228,7 @@ const App = () => {
         }}
       />
       <WatchlistProvider user={user}>
-        <AppContent user={user} isAppReady={isAppReady} />
+        <AppContent user={user} authReady={authReady} site={site} isAppReady={isAppReady} />
       </WatchlistProvider>
     </Router>
   );
