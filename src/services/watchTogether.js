@@ -1,32 +1,36 @@
 import {
-  addDoc, collection, deleteField, doc, getDoc, limitToLast, onSnapshot, orderBy, query,
+  addDoc, collection, deleteField, doc, limitToLast, onSnapshot, orderBy, query,
   serverTimestamp, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../components/firebase';
 import { itemType } from './watchHistory';
 
 // Watch Together rooms (spec 0005). One doc per room in watch_rooms/{roomId}, chat in its
-// messages subcollection. `control` is the host's choice: 'host' (only the host drives playback)
-// or 'everyone' (any member's play, pause, seek or episode change drives it).
-export const MEMBER_HEARTBEAT_MS = 20 * 1000;
-export const MEMBER_LIVE_MS = 60 * 1000;
-export const DRIFT_SEC = 3; // a guest seeks when it is further than this from the host
+// messages subcollection. The host lets each guest in from `pending` into `members` (at most 10,
+// host included) or into `blocked`. `control` is the host's choice: 'host' (only the host drives
+// playback) or 'everyone' (any member's play, pause, seek, episode or server change drives it).
+// Writes are budgeted for the free Spark plan: one presence beat a minute per member, and the
+// host's position beat every 30 s carries its presence too.
+export const MEMBER_BEAT_MS = 60 * 1000;
+export const HOST_BEAT_MS = 30 * 1000;
+export const MEMBER_LIVE_MS = 150 * 1000;
+export const ROOM_IDLE_MS = 12 * 60 * 60 * 1000;
+export const MAX_MEMBERS = 10;
+export const DRIFT_SEC = 3; // a follower seeks when it is further than this from the room
 
 const roomRef = (roomId) => doc(db, 'watch_rooms', roomId);
 
-const memberOf = (user) => ({
-  name: user.displayName || user.email?.split('@')[0] || 'Guest',
-  photo: user.photoURL || null,
-  lastSeen: Date.now(),
-});
+const nameOf = (user) => user.displayName || user.email?.split('@')[0] || 'Guest';
+const memberOf = (user, now = Date.now()) => ({ name: nameOf(user), photo: user.photoURL || null, joinedAt: now, lastSeen: now });
 
 export const roomLink = (roomId) => `${window.location.origin}/together/${roomId}`;
 
-export const createRoom = async (user, movie, { season, episode, position = 0, playing = true }) => {
+export const createRoom = async (user, movie, { season, episode, position = 0, playing = true, server }) => {
   const type = itemType(movie);
+  const now = Date.now();
   const ref = await addDoc(collection(db, 'watch_rooms'), {
     hostUid: user.uid,
-    hostName: memberOf(user).name,
+    hostName: nameOf(user),
     title: {
       id: movie.id,
       type,
@@ -37,55 +41,119 @@ export const createRoom = async (user, movie, { season, episode, position = 0, p
     },
     season: type === 'tv' ? season : null,
     episode: type === 'tv' ? episode : null,
+    server: { sourceId: server?.sourceId || 'framex', providerId: server?.providerId || null },
     playing,
     position,
-    updatedAt: Date.now(),
-    hostLeft: false,
+    updatedAt: now,
     control: 'host',
     lastAction: null,
-    members: { [user.uid]: memberOf(user) },
+    members: { [user.uid]: memberOf(user, now) },
+    pending: {},
+    blocked: {},
+    hostAway: false,
+    activeAt: now,
+    endedAt: null,
     createdAt: serverTimestamp(),
   });
   return ref.id;
 };
 
+// --- Derived room state (the rules check the same things) ---
+export const memberCount = (room) => Object.keys(room?.members || {}).length;
+export const roomEnded = (room, now = Date.now()) =>
+  !room || !!room.endedAt || !room.activeAt || now - room.activeAt >= ROOM_IDLE_MS; // no activeAt: a room from before spec 0005 was ratified
+export const hostIsAway = (room, now = Date.now()) =>
+  !!room && (!!room.hostAway || now - (room.members?.[room.hostUid]?.lastSeen || 0) > MEMBER_LIVE_MS);
+
+// Where this viewer stands: 'ended' | 'member' | 'pending' | 'blocked' | 'full' | 'outsider'.
+// Ended wins over everything but membership, which the player keeps watching on its own.
+export const viewerState = (room, uid, now = Date.now()) => {
+  if (room.members?.[uid]) return roomEnded(room, now) ? 'ended' : 'member';
+  if (room.blocked?.[uid]) return 'blocked';
+  if (roomEnded(room, now)) return 'ended';
+  if (room.pending?.[uid]) return 'pending';
+  return memberCount(room) >= MAX_MEMBERS ? 'full' : 'outsider';
+};
+
 export const canControl = (room, uid) => !!room && !!uid && (room.hostUid === uid || (room.control === 'everyone' && !!room.members?.[uid]));
 
-export const getRoom = async (roomId) => {
-  const snap = await getDoc(roomRef(roomId));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+// The room's playback second, from a snapshot received at `receivedAt` on this device.
+export const roomSecond = (room, receivedAt, now = Date.now()) => {
+  const pos = Number(room?.position) || 0;
+  return room?.playing ? pos + Math.max(0, now - receivedAt) / 1000 : pos;
 };
+
+// The first snapshot has no local receive time for its position yet, so age it by the writer's
+// clock, capped at one host beat so a badly set device clock can not throw it far off.
+export const firstReceivedAt = (room, now = Date.now()) =>
+  now - Math.min(Math.max(0, now - (Number(room?.updatedAt) || now)), HOST_BEAT_MS + 5000);
 
 export const subscribeRoom = (roomId, cb, onError) =>
   onSnapshot(roomRef(roomId), (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null), onError);
 
-// The playback state everyone follows. `action` ('play' | 'pause' | 'seek' | 'episode') names a
-// person's own action, shown to the others; null is the host's quiet position heartbeat.
-export const publishState = (roomId, user, action, { playing, position, season, episode }) =>
-  updateDoc(roomRef(roomId), {
+// --- Lobby ---
+export const knock = (roomId, user) =>
+  updateDoc(roomRef(roomId), { [`pending.${user.uid}`]: { name: nameOf(user), photo: user.photoURL || null, at: Date.now() } });
+export const cancelKnock = (roomId, uid) => updateDoc(roomRef(roomId), { [`pending.${uid}`]: deleteField() });
+
+// Host only.
+export const admit = (roomId, uid, entry) => {
+  const now = Date.now();
+  return updateDoc(roomRef(roomId), {
+    [`pending.${uid}`]: deleteField(),
+    [`members.${uid}`]: { name: entry?.name || 'Guest', photo: entry?.photo || null, joinedAt: now, lastSeen: now },
+  });
+};
+export const deny = (roomId, uid, entry) =>
+  updateDoc(roomRef(roomId), { [`pending.${uid}`]: deleteField(), [`blocked.${uid}`]: { name: entry?.name || 'Guest', at: Date.now() } });
+export const removeMember = (roomId, uid, entry) =>
+  updateDoc(roomRef(roomId), { [`members.${uid}`]: deleteField(), [`blocked.${uid}`]: { name: entry?.name || 'Guest', at: Date.now() } });
+
+// --- Playback ---
+// The playback state everyone follows. `action` ('play' | 'pause' | 'seek' | 'episode' | 'server')
+// names a person's own action, shown to the others; null is the host's quiet position beat.
+// Every publish also counts as the publisher's presence beat.
+export const publishState = (roomId, user, action, { playing, position, season, episode, server }) => {
+  const now = Date.now();
+  return updateDoc(roomRef(roomId), {
     playing: !!playing,
     position: Math.max(0, Number(position) || 0),
     season: season ?? null,
     episode: episode ?? null,
-    updatedAt: Date.now(),
-    ...(action ? { lastAction: { uid: user.uid, name: memberOf(user).name, action, at: Date.now() } } : {}),
+    ...(server ? { server: { sourceId: server.sourceId, providerId: server.providerId || null } } : {}),
+    updatedAt: now,
+    activeAt: now,
+    [`members.${user.uid}.lastSeen`]: now,
+    ...(action ? { lastAction: { uid: user.uid, name: nameOf(user), action, at: now } } : {}),
   });
+};
 
 // Host only: who may drive playback.
 export const setControl = (roomId, control) => updateDoc(roomRef(roomId), { control: control === 'everyone' ? 'everyone' : 'host' });
 
-export const actionVerb = (a) => ({ play: 'pressed play', pause: 'paused', seek: 'skipped to a new spot', episode: 'changed the episode' }[a?.action] || 'changed playback');
+export const actionVerb = (a) => ({ play: 'pressed play', pause: 'paused', seek: 'skipped to a new spot', episode: 'changed the episode', server: 'switched the server' }[a?.action] || 'changed playback');
 export const actionLabel = (a) => (a ? `${a.name} ${actionVerb(a)}` : '');
 
-export const joinRoom = (roomId, user) => updateDoc(roomRef(roomId), { [`members.${user.uid}`]: memberOf(user) });
-export const heartbeat = (roomId, user) => updateDoc(roomRef(roomId), { [`members.${user.uid}.lastSeen`]: Date.now() });
+// --- Presence ---
+// Opening the room and the minute beat are the same write; the host's also says it is back.
+export const beat = (roomId, user, { isHost = false } = {}) => {
+  const now = Date.now();
+  return updateDoc(roomRef(roomId), { [`members.${user.uid}.lastSeen`]: now, activeAt: now, ...(isHost ? { hostAway: false } : {}) });
+};
 
-export const leaveRoom = (roomId, user, isHost) =>
+// A guest's leave writes nothing (their lastSeen just ages, like a crashed tab). The host marks the
+// room away; in host controls mode it also parks playback at its own second, so it can pick up
+// from exactly there on return.
+export const hostLeave = (roomId, { control, position }) =>
   updateDoc(roomRef(roomId), {
-    [`members.${user.uid}`]: deleteField(),
-    ...(isHost ? { hostLeft: true, playing: false } : {}),
+    hostAway: true,
+    ...(control === 'everyone' ? {} : { playing: false, position: Math.max(0, Number(position) || 0), updatedAt: Date.now() }),
   });
 
+// Host only: closes the room for good.
+export const endRoom = (roomId) => updateDoc(roomRef(roomId), { endedAt: Date.now(), playing: false });
+
+// --- Chat (members only, by rule) ---
 export const subscribeMessages = (roomId, cb) =>
   onSnapshot(
     query(collection(db, 'watch_rooms', roomId, 'messages'), orderBy('createdAt'), limitToLast(100)),
@@ -98,7 +166,7 @@ export const sendMessage = (roomId, user, text) => {
   if (!clean) return Promise.resolve();
   return addDoc(collection(db, 'watch_rooms', roomId, 'messages'), {
     uid: user.uid,
-    name: memberOf(user).name,
+    name: nameOf(user),
     photo: user.photoURL || null,
     text: clean,
     createdAt: serverTimestamp(),
@@ -109,3 +177,6 @@ export const liveMembers = (room, now = Date.now()) =>
   Object.entries(room?.members || {})
     .map(([uid, m]) => ({ uid, ...m, live: now - (m.lastSeen || 0) < MEMBER_LIVE_MS }))
     .sort((a, b) => Number(b.uid === room.hostUid) - Number(a.uid === room.hostUid) || Number(b.live) - Number(a.live));
+
+export const pendingList = (room) =>
+  Object.entries(room?.pending || {}).map(([uid, p]) => ({ uid, ...p })).sort((a, b) => (a.at || 0) - (b.at || 0));

@@ -19,12 +19,18 @@ import { recordWatch, findHistoryItem, resumeFrom } from '../services/watchHisto
 import { createRoom, roomLink } from '../services/watchTogether';
 import { useFrameXPlayer } from '../components/player/useFrameXPlayer';
 import { useWatchTogether } from '../components/player/useWatchTogether';
-import TogetherPanel from '../components/player/TogetherPanel';
+import TogetherPanel, { KnockToast } from '../components/player/TogetherPanel';
 import SettingsMenu from '../components/player/SettingsMenu';
 import EpisodesPanel from '../components/player/EpisodesPanel';
 import MobileWatchDetails from '../components/player/MobileWatchDetails';
 import SubtitleOverlay from '../components/player/SubtitleOverlay';
 import { Spinner } from '../components/ui/feedback';
+
+// A source this device can play: phones and tablets run only sandboxed ones (see settingsProps).
+const usableSource = (id, touch) => {
+  const src = STREAM_SOURCES.find((s) => s.id === id);
+  return !!src && (!touch || !!src.sandbox);
+};
 
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
@@ -151,17 +157,17 @@ const SeekBar = ({ current, duration, onSeek, rotated = false }) => {
 // Backup sources keep their own controls and are only used when picked by hand in Settings.
 // `resume` ({ season, episode, t }) starts at a known point (details page, Continue Watching, a
 // Watch Together link). Left out, the player looks the title up in the viewer's history first.
-// `roomId` opens it inside a Watch Together room.
-const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) => {
+// `roomId` opens it inside a Watch Together room, on the room's `server` ({ sourceId, providerId }).
+const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, server: joinServer = null }) => {
   const isTV = movie.type === 'tv' || movie.media_type === 'tv' || !!movie.first_air_date;
   const title = movie.title || movie.name;
 
-  const [sourceId, setSourceId] = useState(STREAM_SOURCES[0].id);
-  const [providerId, setProviderId] = useState(null);
-  const [providers, setProviders] = useState([]);
   const [phone] = useState(isPhone);
   const [ios] = useState(isIOS);
   const [touch] = useState(isCoarse);
+  const [sourceId, setSourceId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.sourceId : STREAM_SOURCES[0].id));
+  const [providerId, setProviderId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.providerId || null : null));
+  const [providers, setProviders] = useState([]);
   // Phones open inline (player on top, details below). Full screen ("immersive") is real fullscreen +
   // landscape lock where the browser allows it, and a CSS rotated landscape stage when it does not
   // (iPhone) or the phone is held upright.
@@ -408,8 +414,23 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
   const [roomId, setRoomId] = useState(joinRoomId);
   const [showTogether, setShowTogether] = useState(!!joinRoomId);
   const [startingRoom, setStartingRoom] = useState(false);
-  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, onEpisode: loadEpisode });
-  const inRoom = !!together.room && !together.hostLeft;
+  const roomServer = useMemo(() => ({ sourceId, providerId }), [sourceId, providerId]);
+  // Someone switched the room's server: follow it from the room's second. Phones only run
+  // sandboxed sources, so a server they can not play is skipped with a note.
+  const followServer = useCallback((next, t) => {
+    if (!usableSource(next?.sourceId, touch)) {
+      toast('The room switched to a server that does not play on this device. Staying on yours.', { id: 'room-server', icon: '👥' });
+      return;
+    }
+    setStartAt(Math.max(0, t));
+    setFailedSources((prev) => prev.filter((f) => f !== next.sourceId));
+    setSourceId(next.sourceId);
+    setProviderId(next.providerId || null);
+    setBackupLoading(true);
+    setShieldActive(true);
+  }, [touch]);
+  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, server: roomServer, onEpisode: loadEpisode, onServer: followServer });
+  const inRoom = together.syncing;
   // A person's own play, pause, seek or episode change goes to the room first. Members who may not
   // control right now (host only mode) are held with a note; everyone else acts as usual.
   const share = (action, state) => {
@@ -427,6 +448,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
         episode: isTV ? episode : null,
         position: player.duration > 0 ? player.currentTime : startAt,
         playing: !player.paused,
+        server: { sourceId, providerId },
       });
       setRoomId(id);
       setShowTogether(true);
@@ -452,6 +474,31 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
     }
   };
   useEffect(() => { if (together.missing && roomId) { toast.error('That Watch Together room is gone'); leaveTogether(); } }, [together.missing]);
+
+  // Host: a toast with Let in and Deny for each knock, open until it is handled (here, in the room
+  // sheet, or on another of the host's devices).
+  const knockIds = together.pending.map((p) => p.uid).join(',');
+  const shownKnocks = useRef(new Set());
+  useEffect(() => {
+    const current = new Set(together.pending.map((p) => p.uid));
+    together.pending.forEach((p) => {
+      if (shownKnocks.current.has(p.uid)) return;
+      shownKnocks.current.add(p.uid);
+      toast((t) => (
+        <KnockToast
+          guest={p}
+          onLetIn={() => { toast.dismiss(t.id); together.letIn(p.uid, p).catch(() => toast.error('Could not let them in. The room may be full.')); }}
+          onDeny={() => { toast.dismiss(t.id); together.turnAway(p.uid, p).catch(() => toast.error('Could not turn them away. Try again.')); }}
+        />
+      ), { id: `knock-${p.uid}`, duration: Infinity });
+    });
+    shownKnocks.current.forEach((guestUid) => {
+      if (current.has(guestUid)) return;
+      shownKnocks.current.delete(guestUid);
+      toast.dismiss(`knock-${guestUid}`);
+    });
+  }, [knockIds]);
+  useEffect(() => () => shownKnocks.current.forEach((guestUid) => toast.dismiss(`knock-${guestUid}`)), []);
 
   // In a room everyone starts the new episode from the top together.
   const goToEpisode = useCallback((s, e) => {
@@ -573,7 +620,10 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
   // --- SOURCE / SERVER CHANGES (resume from where you are) ---
   const resumeHere = () => setStartAt(isFrameX && player.currentTime > 5 ? player.currentTime : startAt);
 
+  // In a room the server is a playback action like any other: it goes to the room first (held for
+  // members who may not control), and everyone else follows it.
   const chooseSource = (id) => {
+    if (!share('server', { server: { sourceId: id, providerId: null } })) return;
     resumeHere();
     setFailedSources((prev) => prev.filter((f) => f !== id));
     setSourceId(id);
@@ -582,6 +632,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
     setPanel(null);
   };
   const chooseProvider = (id) => {
+    if (!share('server', { server: { sourceId, providerId: id } })) return;
     resumeHere();
     setProviderId(id);
     setPanel(null);
@@ -808,16 +859,19 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
   const detailsNotice = !isFrameX ? `${source.name} is a backup source with its own player.` : null;
 
   const liveCount = together.members.filter((m) => m.live).length;
+  const knocks = together.pending.length;
   const togetherButton = (
     <Ctl
-      label={roomId ? `Watch together, ${liveCount} here` : 'Watch together'}
+      label={roomId ? `Watch together, ${liveCount} here${knocks ? `, ${knocks} waiting to join` : ''}` : 'Watch together'}
       onClick={() => (roomId ? setShowTogether((v) => !v) : startTogether())}
       active={!!roomId}
       disabled={startingRoom}
       aria-pressed={!!roomId}
     >
       {startingRoom ? <Spinner size={18} /> : <Users size={20} aria-hidden="true" />}
-      {roomId && liveCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold">{liveCount}</span>}
+      {roomId && knocks > 0
+        ? <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rating px-1 text-[10px] font-bold text-black motion-safe:animate-pulse" aria-hidden="true">{knocks}</span>
+        : roomId && liveCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold">{liveCount}</span>}
     </Ctl>
   );
 
@@ -1243,6 +1297,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null }) 
             user={currentUser}
             onClose={() => setShowTogether(false)}
             onLeave={leaveTogether}
+            onEnd={() => together.endForEveryone().then(leaveTogether, () => toast.error('Could not end the room. Try again.'))}
             onSyncNow={syncNow}
           />
         )}

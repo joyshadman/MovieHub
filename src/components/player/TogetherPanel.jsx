@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion as Motion, useReducedMotion } from 'framer-motion';
-import { Copy, Crown, LogOut, RefreshCcw, Send, Users, X } from 'lucide-react';
+import { Check, Copy, Crown, LogOut, Power, RefreshCcw, Send, UserMinus, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { actionVerb, roomLink } from '../../services/watchTogether';
+import { MAX_MEMBERS, actionVerb, roomLink } from '../../services/watchTogether';
 import { dicebearAvatarUrl, profileImgAttrs } from '../../utils/avatarUrls';
 
 const avatar = (m) => m.photo || dicebearAvatarUrl(m.name || m.uid || 'guest');
@@ -11,13 +11,25 @@ const timeOf = (msg) => {
   return d ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
 };
 
-// Watch Together side sheet (spec 0005): share link, who is here, chat, and the guest's controls.
-const TogetherPanel = ({ together, user, onClose, onLeave, onSyncNow }) => {
+// The host's toast for one knock (Watch.jsx shows one per guest until it is handled).
+export const KnockToast = ({ guest, onLetIn, onDeny }) => (
+  <div className="flex items-center gap-3 font-body">
+    <img src={avatar(guest)} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" {...profileImgAttrs} />
+    <p className="min-w-0 flex-1 text-sm"><span className="font-semibold">{guest.name}</span> wants to join</p>
+    <button type="button" onClick={onDeny} className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/10">Deny</button>
+    <button type="button" onClick={onLetIn} className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-white hover:bg-accent-hover">Let in</button>
+  </div>
+);
+
+// Watch Together side sheet (spec 0005): share link, the host's lobby, who is here, chat, and the
+// member's controls.
+const TogetherPanel = ({ together, user, onClose, onLeave, onEnd, onSyncNow }) => {
   const reduce = useReducedMotion();
-  const { room, isHost, hostLeft, members, messages, send, control, changeControl } = together;
+  const { room, isHost, hostAway, ended, members, pending, messages, send, control, changeControl, letIn, turnAway, remove } = together;
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -30,10 +42,13 @@ const TogetherPanel = ({ together, user, onClose, onLeave, onSyncNow }) => {
   const copy = () => navigator.clipboard?.writeText(link).then(() => toast.success('Invite link copied'), () => toast.error('Could not copy the link'));
   const everyone = control === 'everyone';
   const host = room.hostName || 'the host';
-  const status = hostLeft ? `${room.hostName || 'The host'} left. You are watching on your own now.`
-    : isHost ? (everyone ? 'You are the host. Everyone in the room can play, pause, skip and change the episode.' : 'You are the host. Everyone follows your play, pause, skip and episode.')
+  const status = ended ? 'The host ended the room. You are watching on your own now.'
+    : isHost ? (everyone ? 'You are the host. Everyone in the room can play, pause, skip, and change the episode or server.' : 'You are the host. Everyone follows your play, pause, skip, episode and server.')
+    : hostAway ? (everyone ? `${host} is away. Everyone can still control playback.` : `${host} is away. You are watching on your own until they come back.`)
     : everyone ? `${host} lets everyone control. Your play, pause and skips move the whole room.`
     : `Following ${host}. Only the host controls playback right now.`;
+  const full = members.length >= MAX_MEMBERS;
+  const handle = (fn, guest, failText) => fn(guest.uid, guest).catch(() => toast.error(failText));
   const toggleControl = async () => {
     setSwitching(true);
     try { await changeControl(everyone ? 'host' : 'everyone'); } catch { toast.error('Could not change who controls'); } finally { setSwitching(false); }
@@ -63,7 +78,7 @@ const TogetherPanel = ({ together, user, onClose, onLeave, onSyncNow }) => {
 
       <div className="space-y-3 border-b border-white/10 px-4 py-4">
         <p className="text-xs leading-5 text-white/60" role="status">{status}</p>
-        {isHost && !hostLeft && (
+        {isHost && !ended && (
           <div className="flex items-center justify-between gap-3 rounded-control border border-white/10 bg-white/[0.04] px-3 py-2.5">
             <span id="together-control-label" className="text-xs font-medium text-white/85">Let everyone control playback</span>
             <button
@@ -79,7 +94,7 @@ const TogetherPanel = ({ together, user, onClose, onLeave, onSyncNow }) => {
             </button>
           </div>
         )}
-        {room.lastAction && !hostLeft && (
+        {room.lastAction && !ended && (
           <p className="text-[11px] text-white/40">Last: {room.lastAction.uid === user?.uid ? 'You' : room.lastAction.name} {actionVerb(room.lastAction)}</p>
         )}
         <div className="flex items-center gap-2">
@@ -87,21 +102,53 @@ const TogetherPanel = ({ together, user, onClose, onLeave, onSyncNow }) => {
           <button type="button" onClick={copy} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-semibold text-black hover:bg-white/90"><Copy size={13} aria-hidden="true" /> Copy</button>
         </div>
         <div className="flex gap-2">
-          {!isHost && !hostLeft && (
+          {!isHost && together.syncing && (
             <button type="button" onClick={onSyncNow} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-white/20 text-xs font-semibold hover:bg-white/10"><RefreshCcw size={13} aria-hidden="true" /> Sync now</button>
           )}
           <button type="button" onClick={onLeave} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-white/20 text-xs font-semibold text-accent-text hover:bg-white/10"><LogOut size={13} aria-hidden="true" /> {isHost ? 'End for me' : 'Leave room'}</button>
         </div>
+        {isHost && !ended && (
+          confirmEnd ? (
+            <div role="alertdialog" aria-labelledby="together-end-title" className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-accent/40 bg-accent/10 px-3 py-2.5">
+              <p id="together-end-title" className="text-xs text-white/85">End the room for everyone? Nobody can rejoin.</p>
+              <div className="flex gap-2">
+                <button type="button" autoFocus onClick={() => setConfirmEnd(false)} className="rounded-full border border-white/15 px-3 py-1 text-xs text-white/85 hover:bg-white/10">Cancel</button>
+                <button type="button" onClick={onEnd} className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-white hover:bg-accent-hover">End room</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setConfirmEnd(true)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white"><Power size={13} aria-hidden="true" /> End room for everyone</button>
+          )
+        )}
       </div>
 
+      {isHost && !ended && pending.length > 0 && (
+        <div className="border-b border-white/10 bg-rating/[0.06] px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-rating">Waiting to join · {pending.length}{full ? ' · room is full' : ''}</p>
+          <ul className="mt-2 space-y-2">
+            {pending.map((p) => (
+              <li key={p.uid} className="flex items-center gap-2 text-xs">
+                <img src={avatar(p)} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" {...profileImgAttrs} />
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                <button type="button" onClick={() => handle(turnAway, p, 'Could not turn them away. Try again.')} aria-label={`Deny ${p.name}`} className="rounded-full border border-white/20 px-2.5 py-1 font-semibold hover:bg-white/10">Deny</button>
+                <button type="button" onClick={() => handle(letIn, p, 'Could not let them in. The room may be full.')} disabled={full} aria-label={`Let ${p.name} in`} className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 font-semibold text-white hover:bg-accent-hover disabled:opacity-40"><Check size={12} aria-hidden="true" /> Let in</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="border-b border-white/10 px-4 py-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Here now · {members.filter((m) => m.live).length}</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Here now · {members.filter((m) => m.live).length} <span className="font-normal normal-case tracking-normal">({members.length} of {MAX_MEMBERS} seats)</span></p>
         <ul className="mt-2 flex flex-wrap gap-2">
           {members.map((m) => (
             <li key={m.uid} className={`flex items-center gap-2 rounded-full border px-2 py-1 text-xs ${m.live ? 'border-white/15 bg-white/[0.05]' : 'border-white/5 text-white/40'}`}>
               <img src={avatar(m)} alt="" className="h-5 w-5 rounded-full object-cover" {...profileImgAttrs} />
               <span className="max-w-[110px] truncate">{m.uid === user?.uid ? 'You' : m.name}</span>
               {m.uid === room.hostUid && <Crown size={12} className="text-rating" aria-label="Host" />}
+              {isHost && !ended && m.uid !== room.hostUid && (
+                <button type="button" onClick={() => handle(remove, m, 'Could not remove them. Try again.')} aria-label={`Remove ${m.name} from the room`} title="Remove from the room" className="-mr-0.5 rounded-full p-0.5 text-white/50 hover:bg-white/10 hover:text-white"><UserMinus size={12} aria-hidden="true" /></button>
+              )}
             </li>
           ))}
         </ul>

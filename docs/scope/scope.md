@@ -239,9 +239,9 @@ Signed in friends watch the same movie or episode in sync from a shared link, wi
 **Done when:** guests wait in a lobby until the host lets them in, approvals stick and denials block, a room holds at most 10, playback, episode and server stay in sync, a host refresh does not end the room, rooms end on request or after 12 h idle, and every tamper attempt is refused.
 - [x] Design it (spec): `/architect watch together`
 - [ ] Build it: `/develop watch together`
-   - [ ] Fewer writes and host away or return (AC-9, AC-14)
-   - [ ] Lobby: waiting screen, knock, let in or deny, the cap of 10, remove member (AC-2, AC-3, AC-4, AC-5, AC-10)
-   - [ ] Shared server and room end (AC-6, AC-7, AC-8, AC-11)
+   - [x] Fewer writes and host away or return (AC-9, AC-14)
+   - [x] Lobby: waiting screen, knock, let in or deny, the cap of 10, remove member (AC-2, AC-3, AC-4, AC-5, AC-10)
+   - [x] Shared server and room end (AC-6, AC-7, AC-8, AC-11)
    - [ ] Firestore rules published, and the built behavior rechecked (AC-1, AC-6, AC-7, AC-8, AC-12, AC-13)
 - [ ] Verify it: `/check verify watch together`
 Spec [0005](../specs/0005-watch-together/index.md) · code in `src/services/watchTogether.js`, `src/components/player/useWatchTogether.js`, `src/components/player/TogetherPanel.jsx`, `src/Pages/TogetherRoom.jsx`, `src/Pages/Watch.jsx` · from spec 0005
