@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion as Motion, useReducedMotion } from 'framer-motion';
-import { Check, ChevronRight, Zap, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Check, ChevronRight, Zap, Minus, Plus, RotateCcw, AudioLines } from 'lucide-react';
 import { SUB_BACKGROUNDS, SUB_COLORS, SUB_POSITIONS, SUB_SIZES } from '../../services/subtitles';
 import { SubtitleText } from './SubtitleOverlay';
 
@@ -51,12 +51,13 @@ const Tag = ({ children, tone = 'plain' }) => (
   <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${tone === 'bad' ? 'bg-accent/20 text-accent-text' : 'bg-white/10 text-white/70'}`}>{children}</span>
 );
 
-// Netflix style settings sheet from the reference screenshot: Servers, Subtitles, Speed.
+// Netflix style settings sheet from the reference screenshot: Servers, Subtitles, Audio, Speed.
 // Each section says plainly which part our UI controls and which part lives inside the iframe.
 const SettingsMenu = ({
   onClose, sources, sourceId, onSource, failedSources, autoSwitch, onAutoSwitch,
   custom, providers, providerId, onProvider,
   subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset, nativeSubs = false, ownPlayer = false,
+  subRoomNote = null, isFrameX = true, audio = { list: [], status: 'idle' }, dubMode = false, roomAudio = null, onDub, onLeaveDub,
   speed, onSpeed, position = 'bottom-24 right-3 sm:right-6', initialTab = 'servers',
 }) => {
   const reduce = useReducedMotion();
@@ -66,6 +67,7 @@ const SettingsMenu = ({
   const tabs = [
     { id: 'servers', label: 'Servers' },
     { id: 'subtitles', label: 'Subtitles' },
+    { id: 'audio', label: 'Audio' },
     { id: 'speed', label: 'Speed' },
   ];
 
@@ -92,7 +94,7 @@ const SettingsMenu = ({
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className={`absolute ${position} z-40 w-[min(340px,calc(100vw-24px))] max-h-[min(460px,calc(100%-140px))] flex flex-col overflow-hidden rounded-panel border border-white/10 bg-[#111116]/95 shadow-[0_24px_60px_-12px_rgb(0_0_0/0.9)] backdrop-blur-xl font-body`}
     >
-      <div role="tablist" aria-label="Settings sections" className="grid grid-cols-3 gap-1 border-b border-white/10 p-1.5">
+      <div role="tablist" aria-label="Settings sections" className="grid grid-cols-4 gap-1 border-b border-white/10 p-1.5">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -114,12 +116,13 @@ const SettingsMenu = ({
               <>
                 <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">MovieHub servers · {providers.length}</p>
                 <div role="menu" aria-label="MovieHub servers">
-                  <Row active={!providerId} onClick={() => onProvider(null)} right={<Tag>Auto</Tag>}>Best available</Row>
+                  {/* In the set order (frameX.js); frameXTV's own auto pick last, as the rotation tries it */}
                   {providers.map((p) => (
                     <Row key={p.id} active={providerId === p.id} onClick={() => onProvider(p.id)} right={p.tagline ? <Tag>{/4k/i.test(p.tagline) ? '4K' : 'HD'}</Tag> : null}>
                       {p.name}
                     </Row>
                   ))}
+                  <Row active={!providerId} onClick={() => onProvider(null)} right={<Tag>Auto</Tag>}>Best available</Row>
                 </div>
               </>
             )}
@@ -155,6 +158,7 @@ const SettingsMenu = ({
         {tab === 'subtitles' && (
           custom ? (
             <>
+              {subRoomNote && <p className="mx-1.5 mt-1.5 rounded-lg bg-accent/10 px-3 py-2 text-[11px] leading-4 text-white/70">{subRoomNote}</p>}
               <div role="tablist" aria-label="Subtitle settings" className="grid grid-cols-2 gap-1 p-1.5">
                 {[['language', 'Language'], ['style', 'Style & timing']].map(([id, label]) => (
                   <button key={id} type="button" role="tab" aria-selected={subView === id} onClick={() => setSubView(id)} className={`rounded-full py-1.5 text-xs font-semibold motion-safe:transition-colors ${subView === id ? 'bg-accent text-white' : 'bg-white/[0.06] text-white/60 hover:text-white'}`}>
@@ -219,6 +223,36 @@ const SettingsMenu = ({
           ) : (
             <p className="px-3 py-4 text-sm leading-6 text-white/60">{ownPlayer ? 'Use the subtitle button inside the video.' : 'This backup source has its own subtitle button inside the video.'}</p>
           )
+        )}
+
+        {tab === 'audio' && (
+          <div className="px-3 py-3 text-sm leading-6 text-white/60">
+            {!isFrameX && <p>This backup source has its own audio button inside the video, when it has more than one language.</p>}
+            {isFrameX && audio.status === 'loading' && <p>Checking which languages this title has…</p>}
+            {isFrameX && audio.status === 'error' && <p>Could not check the audio languages. Try again in a moment.</p>}
+            {isFrameX && audio.status === 'ready' && audio.list.length < 2 && (
+              <p>{audio.list.length ? `Only ${audio.list[0].label} audio was found for this title on our servers.` : 'No other audio languages were found for this title on our servers.'}</p>
+            )}
+            {isFrameX && audio.status === 'ready' && audio.list.length > 1 && (
+              <>
+                {roomAudio && <p className="mb-3 rounded-lg bg-accent/10 px-3 py-2 text-[11px] leading-4 text-white/70">Room audio: {roomAudio.label}. Pick it from the audio button inside the video.</p>}
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Languages on this title</p>
+                <div role="menu" aria-label="Audio languages" className="-mx-3">
+                  {audio.list.map((a) => (
+                    <Row key={a.lang} active={roomAudio?.lang === a.lang} onClick={() => onDub(a)} right={<AudioLines size={14} className="text-white/40" aria-hidden="true" />}>
+                      {a.label}
+                    </Row>
+                  ))}
+                </div>
+                <p className="mt-2">{dubMode
+                  ? 'You are in the dub player. Pick the language from the audio button inside the video.'
+                  : "Dubs play in the server's own player. It reloads right where you are, then you pick the language from its audio button."}</p>
+                {dubMode && (
+                  <button type="button" onClick={onLeaveDub} className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-white/20 text-xs font-semibold text-white hover:bg-white/10">Back to MovieHub controls</button>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {tab === 'speed' && (

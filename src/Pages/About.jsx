@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { motion as Motion, useReducedMotion } from 'framer-motion';
 import {
-  ArrowRight, Play, Github, Globe, Trash2, Send, ShieldCheck, ExternalLink,
+  ArrowRight, Play, Github, Globe, Trash2, Send, ShieldCheck, ExternalLink, Compass,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { startTour } from '../utils/tour';
 import { auth, db } from '../components/firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import Button from '../components/ui/Button';
@@ -133,6 +134,13 @@ const About = ({ user: propUser }) => {
                   <Play size={13} className="ml-0.5 fill-white" aria-hidden="true" />
                 </span>
                 Watch showreel
+              </button>
+              <button
+                type="button"
+                onClick={startTour}
+                className={`inline-flex h-12 items-center gap-2.5 rounded-full px-4 text-white/70 hover:text-white hover:bg-white/[0.06] motion-safe:transition-colors ${EYEBROW} tracking-[0.2em]`}
+              >
+                <Compass size={16} aria-hidden="true" /> Take the tour
               </button>
             </div>
           </Reveal>

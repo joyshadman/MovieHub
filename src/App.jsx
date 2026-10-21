@@ -7,7 +7,7 @@ import { Toaster } from 'react-hot-toast';
 
 import LoadingScreen from './components/LoadingScreen';
 import Navbar from './components/Navbar';
-import DeviceModal from './components/DeviceModal';
+import Tour from './components/Tour';
 import Footer from './components/Footer';
 import { WatchlistProvider } from './context/WatchlistContext';
 import { Spinner } from './components/ui/feedback';
@@ -31,6 +31,9 @@ const ForgotPassword = lazy(() => import('./Pages/auth/ForgotPassword'));
 const NotFound = lazy(() => import('./Pages/NotFound'));
 const Admin = lazy(() => import('./Pages/Admin'));
 const TogetherRoom = lazy(() => import('./Pages/TogetherRoom'));
+const Anime = lazy(() => import('./Pages/Anime'));
+const AnimeDetails = lazy(() => import('./Pages/AnimeDetails'));
+const AnimeWatch = lazy(() => import('./Pages/AnimeWatch'));
 
 const AUTH_PATHS = ['/login', '/signup', '/forgot-password'];
 
@@ -113,6 +116,9 @@ const AppContent = ({ user, authReady, site, isAppReady }) => {
         <Route path="/categories" element={<Categories />} />
         <Route path="/categories/:genreId" element={<CategoryPage />} />
         <Route path="/collection/:slug" element={<CollectionPage />} />
+        <Route path="/anime" element={<Anime />} />
+        <Route path="/anime/:id" element={<AnimeDetails />} />
+        <Route path="/anime/:id/:episode" element={<AnimeWatch />} />
         <Route path="/about" element={<About user={user} />} />
         <Route path="/admin" element={<Admin user={user} site={site} />} />
         <Route path="/together/:roomId" element={<TogetherRoom user={user} />} />
@@ -208,7 +214,7 @@ const App = () => {
         />
       )}
 
-      <DeviceModal isAppReady={isAppReady} />
+      <Tour isAppReady={isAppReady} user={user} />
 
       <Toaster
         position="bottom-center"

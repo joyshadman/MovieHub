@@ -105,7 +105,7 @@ const Categories = () => {
           {COLLECTIONS.map((c, i) => (
             <li key={c.slug} className="motion-safe:animate-rise" style={{ animationDelay: `${i * 60}ms` }}>
               <Link
-                to={`/collection/${c.slug}`}
+                to={c.to || `/collection/${c.slug}`}
                 className="group relative flex h-48 md:h-52 overflow-hidden rounded-panel border border-line bg-card p-6 motion-safe:transition-[transform,box-shadow,border-color] duration-300 ease-out motion-safe:hover:-translate-y-1 hover:border-line-strong hover:shadow-card"
                 style={{ backgroundImage: `linear-gradient(110deg, #0f0f14 35%, ${c.colors[0]}99 85%, ${c.colors[1]})` }}
               >

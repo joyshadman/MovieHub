@@ -145,8 +145,8 @@ const Home = () => {
     { title: 'Horror Essentials', data: horrorMovies, to: '/categories/27' },
     { title: 'Bollywood Specials', data: bollywood, to: '/collection/bollywood' },
     { title: 'Best of Bangla', data: banglaMovies, to: '/collection/bangla' },
-    { title: 'Anime Series', data: animeSeries, to: '/collection/anime' },
-    { title: 'Anime Movies', data: animeMovies, to: '/collection/anime?type=movie' },
+    { title: 'Anime Series', data: animeSeries, to: '/anime' },
+    { title: 'Anime Movies', data: animeMovies, to: '/anime' },
     { title: 'Romantic Escapes', data: romanceMovies, to: '/categories/10749' },
   ];
 

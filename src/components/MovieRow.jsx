@@ -134,7 +134,7 @@ const MovieRow = ({ title, movies = [], onMovieClick, to, ranked = false, header
                   {index + 1}
                 </span>
               )}
-              <div className={ranked ? 'relative w-[110px] sm:w-[130px] lg:w-[150px]' : ''}>
+              <div className={ranked ? 'relative w-[110px] sm:w-[130px] lg:w-[150px]' : ''} data-tour={index === 0 ? 'card' : undefined}>
                 {ranked && <span className="sr-only">Number {index + 1}: </span>}
                 <MovieCard movie={movie} onClick={onMovieClick} />
               </div>

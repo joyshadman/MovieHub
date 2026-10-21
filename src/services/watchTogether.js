@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../components/firebase';
 import { itemType } from './watchHistory';
+import { SUB_BACKGROUNDS, SUB_COLORS, SUB_POSITIONS, SUB_SIZES } from './subtitles';
 
 // Watch Together rooms (spec 0005). One doc per room in watch_rooms/{roomId}, chat in its
 // messages subcollection. The host lets each guest in from `pending` into `members` (at most 10,
@@ -42,6 +43,8 @@ export const createRoom = async (user, movie, { season, episode, position = 0, p
     season: type === 'tv' ? season : null,
     episode: type === 'tv' ? episode : null,
     server: { sourceId: server?.sourceId || 'framex', providerId: server?.providerId || null },
+    subs: null,
+    audio: null,
     playing,
     position,
     updatedAt: now,
@@ -110,10 +113,11 @@ export const removeMember = (roomId, uid, entry) =>
   updateDoc(roomRef(roomId), { [`members.${uid}`]: deleteField(), [`blocked.${uid}`]: { name: entry?.name || 'Guest', at: Date.now() } });
 
 // --- Playback ---
-// The playback state everyone follows. `action` ('play' | 'pause' | 'seek' | 'episode' | 'server')
-// names a person's own action, shown to the others; null is the host's quiet position beat.
+// The playback state everyone follows. `action` ('play' | 'pause' | 'seek' | 'episode' | 'server' |
+// 'audio') names a person's own action, shown to the others; null is the host's quiet position beat.
+// `audio` ({ lang, label, at } or null, spec 0007) is the room's dub language, sent with its server.
 // Every publish also counts as the publisher's presence beat.
-export const publishState = (roomId, user, action, { playing, position, season, episode, server }) => {
+export const publishState = (roomId, user, action, { playing, position, season, episode, server, audio }) => {
   const now = Date.now();
   return updateDoc(roomRef(roomId), {
     playing: !!playing,
@@ -121,6 +125,7 @@ export const publishState = (roomId, user, action, { playing, position, season, 
     season: season ?? null,
     episode: episode ?? null,
     ...(server ? { server: { sourceId: server.sourceId, providerId: server.providerId || null } } : {}),
+    ...(audio !== undefined ? { audio: audio ? { lang: String(audio.lang).slice(0, 40), label: String(audio.label || audio.lang).slice(0, 40), at: audio.at || now } : null } : {}),
     updatedAt: now,
     activeAt: now,
     [`members.${user.uid}.lastSeen`]: now,
@@ -131,7 +136,34 @@ export const publishState = (roomId, user, action, { playing, position, season, 
 // Host only: who may drive playback.
 export const setControl = (roomId, control) => updateDoc(roomRef(roomId), { control: control === 'everyone' ? 'everyone' : 'host' });
 
-export const actionVerb = (a) => ({ play: 'pressed play', pause: 'paused', seek: 'skipped to a new spot', episode: 'changed the episode', server: 'switched the server' }[a?.action] || 'changed playback');
+// The room's subtitles (spec 0007), set by whoever may control playback: on or off, the track
+// (matched by url, then language), the timing offset and the look. `at` tells a device which
+// change it published itself, so it never re-applies its own echo.
+const pick = (list, id, fallback) => (list.some((o) => o.id === id) ? id : fallback);
+export const cleanSubs = ({ on, url, lang, offset, style = {} }, at = Date.now()) => ({
+  on: !!on && !!url,
+  url: on && url ? String(url) : null,
+  lang: lang ? String(lang).slice(0, 20) : null,
+  offset: Math.round(Math.max(-60, Math.min(60, Number(offset) || 0)) * 10) / 10,
+  style: {
+    size: pick(SUB_SIZES, style.size, 'm'),
+    color: pick(SUB_COLORS, style.color, 'white'),
+    bg: pick(SUB_BACKGROUNDS, style.bg, 'soft'),
+    position: pick(SUB_POSITIONS, style.position, 'low'),
+  },
+  at,
+});
+export const publishSubs = (roomId, user, subs) => {
+  const now = Date.now();
+  return updateDoc(roomRef(roomId), {
+    subs: { ...subs, by: user.uid },
+    activeAt: now,
+    [`members.${user.uid}.lastSeen`]: now,
+    lastAction: { uid: user.uid, name: nameOf(user), action: 'subs', at: now },
+  });
+};
+
+export const actionVerb = (a) => ({ play: 'pressed play', pause: 'paused', seek: 'skipped to a new spot', episode: 'changed the episode', server: 'switched the server', subs: 'changed the subtitles', audio: 'changed the audio language' }[a?.action] || 'changed playback');
 export const actionLabel = (a) => (a ? `${a.name} ${actionVerb(a)}` : '');
 
 // --- Presence ---

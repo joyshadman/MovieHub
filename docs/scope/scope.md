@@ -74,7 +74,7 @@ Third party iframe player with 5 switchable servers, TV season and episode picke
 Live site updates feed, online users list, admin only posting and user removal (`VITE_ADMIN_EMAILS`). code in `src/Pages/About.jsx`
 
 ### J. First visit device tip · existing
-One time popup for first time visitors. code in `src/components/DeviceModal.jsx`
+One time popup for first time visitors, replaced by a spotlight tour (assumed decision, spec [0007](../specs/0007-room-subtitles-dubs-tour/index.md)). code in `src/components/Tour.jsx`, `src/utils/tour.js`
 
 ### K. Startup screen and sound (frozen) · existing
 First load intro animation and sound. Frozen by `AGENTS.md`; not part of this restyle. code in `src/components/LoadingScreen.jsx`
@@ -128,6 +128,7 @@ Restyle the frame around the iframe player in the Figma player look: back button
 - [x] Build it: `/develop watch player frame`
 - [ ] Verify it: `/check verify watch player frame`
 code in `src/Pages/Watch.jsx`
+Audio dub picker (Settings, Audio) and server order by tested reliability · assumed decision (spec [0007](../specs/0007-room-subtitles-dubs-tour/index.md)) · code in `src/components/player/SettingsMenu.jsx`, `src/services/frameX.js`
 
 ## Slice 2: Accounts
 
@@ -164,6 +165,7 @@ Collections for Best Bangla, Hollywood, Bollywood, Korean, Japanese and Anime, u
 - [x] Build it: `/develop regional and anime collections`
 - [ ] Verify it: `/check verify regional and anime collections`
 Spec [0002](../specs/0002-figma-restyle-assumptions.md) · code in `src/Pages/CollectionPage.jsx`, `src/utils/collections.js`
+Anime section on ani.pm (Latest, Top rated, Most watched, Schedule, search, title and episode pages) · assumed decision (spec [0008](../specs/0008-anime-on-anipm/index.md)) · code in `src/Pages/Anime.jsx`, `src/Pages/AnimeDetails.jsx`, `src/Pages/AnimeWatch.jsx`, `src/services/aniPm.js`, `src/services/anilist.js`
 
 ### 11. Top 10 by country row · in-progress · assumed decision (spec 0002)
 The big numbered Top 10 row from the Home frame, based on the visitor's country.
@@ -212,7 +214,7 @@ A 404 page, shared empty and error states, the device tip popup and toasts, all 
 - [ ] Design it (spec): `/architect system states`
 - [x] Build it: `/develop system states 404, empty, error, popups, toasts`
 - [ ] Verify it: `/check verify system states 404, empty, error, popups, toasts`
-Spec [0002](../specs/0002-figma-restyle-assumptions.md) · code in `src/Pages/NotFound.jsx`, `src/components/ui/feedback.jsx`, `src/components/ui/Modal.jsx`, `src/components/DeviceModal.jsx`
+Spec [0002](../specs/0002-figma-restyle-assumptions.md) · code in `src/Pages/NotFound.jsx`, `src/components/ui/feedback.jsx`, `src/components/ui/Modal.jsx`, `src/components/Tour.jsx`
 
 ### 17. Global style switch · in-progress · from spec 0001
 Once every page uses the new tokens, flip the app wide defaults: default font to the body font, body background and `theme-color` to the canvas color, and remove the Inter font link.
@@ -245,6 +247,7 @@ Signed in friends watch the same movie or episode in sync from a shared link, wi
    - [ ] Firestore rules published, and the built behavior rechecked (AC-1, AC-6, AC-7, AC-8, AC-12, AC-13)
 - [ ] Verify it: `/check verify watch together`
 Spec [0005](../specs/0005-watch-together/index.md) · code in `src/services/watchTogether.js`, `src/components/player/useWatchTogether.js`, `src/components/player/TogetherPanel.jsx`, `src/Pages/TogetherRoom.jsx`, `src/Pages/Watch.jsx` · from spec 0005
+Room subtitle sync (language, timing, style, following the control mode) · assumed decision (spec [0007](../specs/0007-room-subtitles-dubs-tour/index.md)), owes ratification and a Firestore rules update
 
 ## Deferred
 Out of scope for the current build pass, kept so the plan stays honest.

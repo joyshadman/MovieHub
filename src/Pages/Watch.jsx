@@ -13,7 +13,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { writePresence, activityFor } from '../services/presence';
 import { STREAM_SOURCES } from '../config/streamSources';
 import { movieApi, tmdbAuthHeaders, withTmdbKey } from '../services/movieApi';
-import { fetchFrameXProviders, fetchFrameXSubtitles, loadProgress, saveProgress } from '../services/frameX';
+import { DUB_PROVIDER, FIRST_PROVIDER, fetchFrameXAudio, fetchFrameXProviders, findEmptyProviders, fetchFrameXSubtitles, loadProgress, saveProgress } from '../services/frameX';
 import { loadSubPrefs, saveSubPrefs, loadSubtitleCues, pickTrack } from '../services/subtitles';
 import { recordWatch, findHistoryItem, resumeFrom } from '../services/watchHistory';
 import { createRoom, roomLink } from '../services/watchTogether';
@@ -166,8 +166,13 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const [ios] = useState(isIOS);
   const [touch] = useState(isCoarse);
   const [sourceId, setSourceId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.sourceId : STREAM_SOURCES[0].id));
-  const [providerId, setProviderId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.providerId || null : null));
+  // A room link opens on the room's server; otherwise the first server of the set order (frameX.js).
+  const [providerId, setProviderId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.providerId || null : FIRST_PROVIDER));
   const [providers, setProviders] = useState([]);
+  // Audio dubs (spec 0007): only frameXTV's own player can switch audio, so desktop reloads in it.
+  const [dubMode, setDubMode] = useState(false);
+  const [audio, setAudio] = useState({ key: null, list: [], status: 'idle' });
+  const [roomAudio, setRoomAudio] = useState(null); // a Watch Together room's dub language
   // Phones open inline (player on top, details below). Full screen ("immersive") is real fullscreen +
   // landscape lock where the browser allows it, and a CSS rotated landscape stage when it does not
   // (iPhone) or the phone is held upright.
@@ -196,6 +201,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const [subCues, setSubCues] = useState({ url: null, cues: [] });
   const [subPrefs, setSubPrefs] = useState(loadSubPrefs);
   const [subOffset, setSubOffset] = useState(0);
+  const [roomStyle, setRoomStyle] = useState(null); // a Watch Together room's subtitle look (spec 0007)
   const [panel, setPanel] = useState(null); // 'episodes' | 'settings' | 'subtitles' | null
   const [showUI, setShowUI] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -214,9 +220,10 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // Phones and tablets use frameXTV's OWN player (its controls, full screen and subtitle menu),
   // sandboxed (see FRAME_SANDBOX): no pop ups, no new tabs, no redirects of this page. Desktop is
   // unchanged: our player, no sandbox, backups offered.
-  const ownControls = touch;
+  // Desktop also uses it while picking an audio dub (dubMode).
+  const ownControls = touch || dubMode;
   const custom = isFrameX && !ownControls;
-  const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}`;
+  const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}${dubMode ? '|own' : ''}`;
   const episodeKey = `${season}|${episode}|${reloadKey}`;
   const poster = movie.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}` : (movie.backdrop ? String(movie.backdrop).replace('/t/p/original', '/t/p/w1280') : null);
   const progressRef = { id: movie.id, isTV, season, episode };
@@ -226,6 +233,11 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // inside its own backup player, which we never show), is skipped: we load the next MovieHub server
   // at the same point. Once every server was tried, an error screen offers Try again / Choose server.
   const [tried, setTried] = useState({ key: null, ids: [] });
+  // Until the viewer picks a server by hand, each new episode starts again on the first server of
+  // the set order (spec 0007, 2d). Never in a room: the room's server rules there.
+  const [autoServer, setAutoServer] = useState(() => !joinRoomId);
+  const autoServerRef = useRef(autoServer);
+  autoServerRef.current = autoServer;
   const [exhaustedKey, setExhaustedKey] = useState(null);
   const [noStreamKey, setNoStreamKey] = useState(null);
   const exhausted = exhaustedKey === episodeKey;
@@ -234,7 +246,8 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     if (!isFrameX || ownControls) return; // frameXTV's own player switches its servers itself
     if (!autoSwitch || exhausted) { setNoStreamKey(loadKey); return; }
     const done = [...new Set([...(tried.key === episodeKey ? tried.ids : []), providerId])];
-    const next = [null, ...providers.map((p) => p.id)].find((id) => !done.includes(id));
+    // "Best available" (frameXTV's own auto) last: it is the slowest and often finds nothing.
+    const next = [...providers.map((p) => p.id), null].find((id) => !done.includes(id));
     setTried({ key: episodeKey, ids: done });
     if (next === undefined) { setExhaustedKey(episodeKey); setNoStreamKey(loadKey); return; }
     setProviderId(next);
@@ -245,6 +258,17 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const likelyBlockedRef = useRef(false);
   const handleFrameXSilent = useCallback(() => { if (!likelyBlockedRef.current) rotateRef.current(); }, []);
   const player = useFrameXPlayer({ frameRef, active: isFrameX, loadKey, onFail: handleFrameXFail, onSilent: handleFrameXSilent });
+  // Meanwhile, find the servers with nothing for this episode so the rotation skips them.
+  useEffect(() => {
+    if (!isFrameX || !resolved) return undefined;
+    let cancelled = false;
+    const key = episodeKey;
+    findEmptyProviders({ id: movie.id, isTV, season, episode }).then((empty) => {
+      if (cancelled || !empty.length) return;
+      setTried((t) => ({ key, ids: [...new Set([...(t.key === key ? t.ids : []), ...empty])] }));
+    });
+    return () => { cancelled = true; };
+  }, [isFrameX, resolved, episodeKey]);
 
   useEffect(() => {
     if (user) { setCurrentUser(user); return undefined; }
@@ -400,7 +424,9 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const closePanel = useCallback(() => setPanel(null), []);
 
   // `t` given (Watch Together): start there instead of this browser's resume point.
+  const roomIdRef = useRef(joinRoomId);
   const loadEpisode = useCallback((s, e, t) => {
+    if (autoServerRef.current && !roomIdRef.current) setProviderId(FIRST_PROVIDER);
     setSeason(s);
     setEpisode(e);
     setStartAt(Number.isFinite(t) ? Math.max(0, t) : loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0);
@@ -412,12 +438,14 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
 
   // --- WATCH TOGETHER (spec 0005) ---
   const [roomId, setRoomId] = useState(joinRoomId);
+  roomIdRef.current = roomId;
   const [showTogether, setShowTogether] = useState(!!joinRoomId);
   const [startingRoom, setStartingRoom] = useState(false);
   const roomServer = useMemo(() => ({ sourceId, providerId }), [sourceId, providerId]);
   // Someone switched the room's server: follow it from the room's second. Phones only run
   // sandboxed sources, so a server they can not play is skipped with a note.
   const followServer = useCallback((next, t) => {
+    setAutoServer(false);
     if (!usableSource(next?.sourceId, touch)) {
       toast('The room switched to a server that does not play on this device. Staying on yours.', { id: 'room-server', icon: '👥' });
       return;
@@ -429,7 +457,13 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     setBackupLoading(true);
     setShieldActive(true);
   }, [touch]);
-  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, server: roomServer, onEpisode: loadEpisode, onServer: followServer });
+  // The room's subtitles changed (spec 0007): applied by the subtitle section below.
+  const applyRoomSubsRef = useRef(() => {});
+  const followSubs = useCallback((subs) => applyRoomSubsRef.current(subs), []);
+  // The room's audio language changed (spec 0007): applied by the audio section below.
+  const applyRoomAudioRef = useRef(() => {});
+  const followAudio = useCallback((audio, t) => applyRoomAudioRef.current(audio, t), []);
+  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, server: roomServer, onEpisode: loadEpisode, onServer: followServer, onSubs: followSubs, onAudio: followAudio });
   const inRoom = together.syncing;
   // A person's own play, pause, seek or episode change goes to the room first. Members who may not
   // control right now (host only mode) are held with a note; everyone else acts as usual.
@@ -580,11 +614,12 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
       .catch(() => { if (!cancelled) setSubTracks({ key, list: [], status: 'error' }); });
     return () => { cancelled = true; };
   }, [isFrameX, movie.id, isTV, season, episode]);
-  // New episode with subtitles on: keep the same language.
+  // New episode with subtitles on: keep the same language (the room's, when it set one).
   const subsWanted = useRef(false);
+  const wantedLang = useRef(null);
   useEffect(() => {
     if (!subsWanted.current || subTracks.status !== 'ready') return;
-    if (!subTracks.list.some((t) => t.url === subUrl)) setSubUrl(pickTrack(subTracks.list, subPrefs.lang)?.url || null);
+    if (!subTracks.list.some((t) => t.url === subUrl)) setSubUrl(pickTrack(subTracks.list, wantedLang.current || subPrefs.lang)?.url || null);
   }, [subTracks]);
   useEffect(() => {
     if (!subUrl) return undefined;
@@ -602,9 +637,48 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     setSubUrl(url);
     setSubOffset(0);
     const track = subTracks.list.find((t) => t.url === url);
-    if (track) updateSubPrefs({ lang: track.lang });
+    if (track) { wantedLang.current = track.lang; updateSubPrefs({ lang: track.lang }); }
+    shareSubs({ on: !!url, url, lang: track?.lang || null, offset: 0 });
   };
   const updateSubPrefs = (patch) => setSubPrefs((p) => { const next = { ...p, ...patch }; saveSubPrefs(next); return next; });
+  // In a room the look follows the room's (roomStyle) until this viewer changes it.
+  const shownSubPrefs = inRoom && roomStyle ? { ...subPrefs, ...roomStyle } : subPrefs;
+  const changeSubStyle = (patch) => {
+    updateSubPrefs(patch);
+    setRoomStyle((rs) => (rs ? { ...rs, ...patch } : rs));
+    shareSubs({ style: patch });
+  };
+  const changeSubOffset = (v) => {
+    const next = Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10;
+    setSubOffset(next);
+    shareSubs({ offset: next });
+  };
+
+  // --- WATCH TOGETHER SUBTITLES (spec 0007) ---
+  // A change goes to the room when this member may control it; otherwise it stays theirs alone.
+  const subsNow = useRef({});
+  subsNow.current = { on: !!subUrl, url: subUrl, lang: subTracks.list.find((t) => t.url === subUrl)?.lang || wantedLang.current, offset: subOffset, style: shownSubPrefs };
+  const shareSubs = (patch) => {
+    const result = together.shareSubs({ ...subsNow.current, ...patch, style: { ...subsNow.current.style, ...patch.style } });
+    if (result === 'held') toast("Subtitle changes are just for you. The host sets the room's subtitles.", { id: 'subs-local', icon: '👥' });
+  };
+  // Someone set the room's subtitles: the same track (by url, then language), timing and look.
+  applyRoomSubsRef.current = (subs) => {
+    setSubOffset(Number(subs.offset) || 0);
+    setRoomStyle(subs.style || null);
+    if (!subs.on || !subs.url) { subsWanted.current = false; setSubUrl(null); return; }
+    subsWanted.current = true;
+    if (subs.lang) wantedLang.current = subs.lang;
+    const list = subTracks.list;
+    setSubUrl((list.find((t) => t.url === subs.url) || (list.length ? pickTrack(list, subs.lang) : null))?.url || subs.url);
+  };
+  // Phones (and desktop picking a dub) run frameXTV's own player: hand it the room's language by
+  // its index in frameXTV's list, after every load. Timing and look are out of reach there.
+  const ownSubIndex = isFrameX && !custom && inRoom ? subTracks.list.find((t) => t.url === subUrl)?.index : undefined;
+  useEffect(() => {
+    if (!player.ready || ownSubIndex === undefined) return;
+    player.send('setSubtitle', { index: ownSubIndex });
+  }, [player.ready, loadKey, ownSubIndex]);
   const toggleSubtitles = () => {
     if (subUrl) { chooseSubTrack(null); return; }
     const track = pickTrack(subTracks.list, subPrefs.lang);
@@ -624,6 +698,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // members who may not control), and everyone else follows it.
   const chooseSource = (id) => {
     if (!share('server', { server: { sourceId: id, providerId: null } })) return;
+    setAutoServer(false);
     resumeHere();
     setFailedSources((prev) => prev.filter((f) => f !== id));
     setSourceId(id);
@@ -633,6 +708,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   };
   const chooseProvider = (id) => {
     if (!share('server', { server: { sourceId, providerId: id } })) return;
+    setAutoServer(false);
     resumeHere();
     setProviderId(id);
     setPanel(null);
@@ -642,6 +718,52 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     setReloadKey((k) => k + 1);
     setBackupLoading(true);
     setShieldActive(true);
+  };
+
+  // --- AUDIO DUBS (spec 0007): looked up when Settings opens, once per episode ---
+  const audioKey = `${movie.id}|${season}|${episode}`;
+  const settingsOpen = panel === 'settings' || panel === 'subtitles';
+  useEffect(() => {
+    if (!settingsOpen || !isFrameX || audio.key === audioKey) return;
+    setAudio({ key: audioKey, list: [], status: 'loading' });
+    fetchFrameXAudio({ id: movie.id, isTV, season, episode })
+      .then((list) => setAudio((a) => (a.key === audioKey ? { key: audioKey, list, status: 'ready' } : a)))
+      .catch(() => setAudio((a) => (a.key === audioKey ? { key: null, list: [], status: 'error' } : a)));
+  }, [settingsOpen, isFrameX, audioKey]);
+  // Reload at the same second on the dub server, in frameXTV's own player (its audio button picks
+  // the language; frameXTV can not be told which). In a room the language and the server go to
+  // everyone in one write, following the control mode like subtitles: a member who may not control
+  // switches only for themselves.
+  const enterDub = (t) => {
+    setAutoServer(false);
+    setStartAt(Number.isFinite(t) ? Math.max(0, t) : (isFrameX && player.currentTime > 5 ? player.currentTime : startAt));
+    setSourceId('framex');
+    setProviderId(DUB_PROVIDER);
+    setDubMode(true);
+    setBackupLoading(true);
+    setShieldActive(true);
+    setPanel(null);
+  };
+  const chooseDub = (track) => {
+    const pick = { lang: track.lang, label: track.label || track.lang, at: Date.now() };
+    const shared = together.act('audio', { server: { sourceId: 'framex', providerId: DUB_PROVIDER }, audio: pick });
+    if (inRoom && shared) setRoomAudio(pick);
+    enterDub();
+    toast(`Pick ${pick.label} from the audio button inside the player.`, { id: 'dub', icon: '🎧', duration: 6000 });
+    if (!shared) toast("Audio change is just for you. The host sets the room's audio.", { id: 'audio-local', icon: '👥' });
+  };
+  // Someone set the room's audio: open the dub player at the room's second (the server follows on
+  // its own, see followServer) and say which language to pick.
+  applyRoomAudioRef.current = (audio, t) => {
+    setRoomAudio(audio);
+    if (!audio) return;
+    enterDub(t);
+    toast(`Room audio: ${audio.label}. Pick it from the audio button inside the video.`, { id: 'dub', icon: '🎧', duration: 8000 });
+  };
+  const leaveDub = () => {
+    resumeHere();
+    setDubMode(false);
+    setPanel(null);
   };
   // --- VOLUME / SPEED ---
   const applyVolume = (v) => {
@@ -893,11 +1015,18 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     subStatus: subTracks.status,
     subUrl,
     onSubTrack: chooseSubTrack,
-    subPrefs,
-    onSubPrefs: updateSubPrefs,
+    subPrefs: shownSubPrefs,
+    onSubPrefs: changeSubStyle,
     subOffset,
-    onSubOffset: (v) => setSubOffset(Math.round(Math.max(-60, Math.min(60, v)) * 10) / 10),
+    onSubOffset: changeSubOffset,
+    subRoomNote: inRoom ? (together.allowed ? 'Your subtitle changes go to everyone in the room.' : 'The room sets the subtitles. Changes here are just for you.') : null,
     nativeSubs,
+    isFrameX,
+    audio,
+    dubMode: dubMode && !touch,
+    roomAudio: inRoom ? roomAudio : null,
+    onDub: chooseDub,
+    onLeaveDub: leaveDub,
     ownPlayer: ownControls && isFrameX,
     speed,
     onSpeed: applySpeed,
@@ -1030,7 +1159,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
             cues={subCues.cues}
             clockRef={clockRef}
             offset={subOffset}
-            prefs={subPrefs}
+            prefs={shownSubPrefs}
             lift={uiVisible ? (inline ? 64 : 120) : 0}
           />
         )}
@@ -1155,8 +1284,8 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
           </div>
           {!custom && !inline && (
             <p className="pointer-events-none mt-2 ml-14 text-[11px] text-white/45">
-              {`${source.name} is a backup source with its own player · `}
-              <button type="button" onClick={() => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">back to our player</button>
+              {dubMode && !touch ? (inRoom && roomAudio ? `Room audio: ${roomAudio.label}. Pick it from the audio button inside the video · ` : 'Audio language: use the audio button inside the video · ') : `${source.name} is a backup source with its own player · `}
+              <button type="button" onClick={dubMode && !touch ? leaveDub : () => chooseSource('framex')} className="pointer-events-auto underline hover:text-white">{dubMode && !touch ? 'back to MovieHub controls' : 'back to our player'}</button>
             </p>
           )}
         </div>

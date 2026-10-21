@@ -21,7 +21,7 @@ const COLUMNS = [
       { name: 'Best of Bangla', path: '/collection/bangla' },
       { name: 'Bollywood', path: '/collection/bollywood' },
       { name: 'Korean Wave', path: '/collection/korean' },
-      { name: 'Anime', path: '/collection/anime' },
+      { name: 'Anime', path: '/anime' },
     ],
   },
   {

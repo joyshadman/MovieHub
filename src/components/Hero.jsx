@@ -156,7 +156,7 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
 
             <Motion.p variants={ITEM} className="mt-5 text-sm md:text-base text-muted line-clamp-3 max-w-lg">{current.overview}</Motion.p>
 
-            <Motion.div variants={ITEM} className="mt-7 flex flex-wrap items-center gap-3">
+            <Motion.div variants={ITEM} className="mt-7 flex flex-wrap items-center gap-3" data-tour="hero">
               <Button variant="light" size="lg" onClick={() => onPlay?.(current)} icon={<Play size={18} className="fill-black" aria-hidden="true" />}>
                 Play
               </Button>

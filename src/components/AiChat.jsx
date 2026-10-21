@@ -153,6 +153,7 @@ const AiChat = ({ user, limit = DEFAULT_AI_DAILY_LIMIT }) => {
             exit={reduce ? { opacity: 0 } : { scale: 0.8, opacity: 0 }}
             onClick={() => setOpen(true)}
             aria-haspopup="dialog"
+            data-tour="ai"
             className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] md:bottom-6 md:right-6 z-[120] inline-flex h-12 items-center gap-2 rounded-full bg-accent pl-4 pr-5 font-body text-sm font-semibold text-white shadow-glow hover:bg-accent-hover motion-safe:transition-colors"
           >
             <Sparkles size={18} aria-hidden="true" /> Ask AI

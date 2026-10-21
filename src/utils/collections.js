@@ -1,7 +1,8 @@
 import { movieApi } from '../services/movieApi';
 
 // Regional and anime collections (spec 0002, feature 10).
-// `types` lists the media types a collection offers; the first one is the default.
+// `types` lists the media types a collection offers; the first one is the default. `to` sends a
+// collection to its own section instead (Anime lives at /anime on ani.pm, spec 0008).
 export const COLLECTIONS = [
   {
     slug: 'bangla',
@@ -45,6 +46,7 @@ export const COLLECTIONS = [
   },
   {
     slug: 'anime',
+    to: '/anime',
     title: 'Anime',
     blurb: 'Japanese animation, from shonen epics to quiet slice of life.',
     colors: ['#6D28D9', '#BE185D'],
