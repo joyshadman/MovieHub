@@ -2,19 +2,22 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Star, Eye } from 'lucide-react';
 import { fallbackGradient } from '../utils/fallbackArt';
+import { useAnimeLink } from './useAnimeLink';
 
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 
 // Poster card for the anime section (spec 0008), in the same look as MovieCard: 2:3 art, rating
-// pill, Bebas title, meta line. `to` defaults to the title page; latest episodes link straight to
-// the episode. `badge` is an optional corner label (for example "EP 12").
-const AnimeCard = React.memo(({ anime, to, badge, meta }) => {
+// pill, Bebas title, meta line. `badge` is an optional corner label (for example "EP 12").
+// Every card opens the title's TMDB details page (specs 0009 and 0010; `episode` picks the episode
+// there). The /anime lists only hold titles the ID map matches, so `/anime` is just a safe default.
+const AnimeCard = React.memo(({ anime, badge, meta, episode }) => {
+  const href = useAnimeLink(anime.anilistId, episode, '/anime');
   const [imgFailed, setImgFailed] = useState(false);
   const score = Number(anime.score);
   const showArt = anime.poster && !imgFailed;
   const line = meta ?? [anime.year, anime.format].filter(Boolean).join(' • ');
   return (
-    <Link to={to || `/anime/${anime.anilistId}`} className="group block w-full rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text">
+    <Link to={href} className="group block w-full rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text">
       <div
         className="relative aspect-[2/3] w-full overflow-hidden rounded-card border border-line bg-card motion-safe:transition-[transform,box-shadow,border-color] duration-300 ease-out motion-safe:group-hover:-translate-y-1.5 group-hover:border-accent/40 group-hover:shadow-[0_18px_40px_-14px_rgb(0_0_0/0.8),0_0_0_1px_rgb(225_29_72/0.25)]"
         style={showArt ? undefined : { backgroundImage: fallbackGradient(anime.anilistId) }}

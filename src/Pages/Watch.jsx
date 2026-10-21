@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Play, Pause, RotateCcw, RotateCw, Volume2, Volume1, VolumeX, Maximize, Minimize,
-  SkipForward, ListVideo, Captions, Settings, ServerCrash, RefreshCcw, AlertTriangle, Users,
+  SkipForward, ListVideo, Captions, Settings, ServerCrash, RefreshCcw, AlertTriangle, Users, Megaphone,
 } from 'lucide-react';
 import { Helmet } from 'react-helmet';
 import { useNavigate } from 'react-router-dom';
@@ -17,7 +17,11 @@ import { DUB_PROVIDER, FIRST_PROVIDER, fetchFrameXAudio, fetchFrameXProviders, f
 import { loadSubPrefs, saveSubPrefs, loadSubtitleCues, pickTrack } from '../services/subtitles';
 import { recordWatch, findHistoryItem, resumeFrom } from '../services/watchHistory';
 import { createRoom, roomLink } from '../services/watchTogether';
+import { ANI_LANGS, aniPm } from '../services/aniPm';
 import { useFrameXPlayer } from '../components/player/useFrameXPlayer';
+import { useAniPmPlayer } from '../components/player/useAniPmPlayer';
+import { useAniPmOption } from '../components/player/useAniPmOption';
+import FindOnAniPm from '../components/player/FindOnAniPm';
 import { useWatchTogether } from '../components/player/useWatchTogether';
 import TogetherPanel, { KnockToast } from '../components/player/TogetherPanel';
 import SettingsMenu from '../components/player/SettingsMenu';
@@ -26,11 +30,27 @@ import MobileWatchDetails from '../components/player/MobileWatchDetails';
 import SubtitleOverlay from '../components/player/SubtitleOverlay';
 import { Spinner } from '../components/ui/feedback';
 
-// A source this device can play: phones and tablets run only sandboxed ones (see settingsProps).
+// A source this device can play: phones and tablets run only sandboxed ones (see settingsProps),
+// plus ani.pm, which by its terms runs unsandboxed everywhere (spec 0009).
 const usableSource = (id, touch) => {
   const src = STREAM_SOURCES.find((s) => s.id === id);
-  return !!src && (!touch || !!src.sandbox);
+  return !!src && (!touch || !!src.sandbox || !!src.anime);
 };
+
+// ani.pm (spec 0009): Sub or Dub is remembered in this browser; the ad tab note shows once per browser.
+const readAniLang = () => {
+  try { return localStorage.getItem('mh:anime-lang') === 'dub' ? 'dub' : 'sub'; } catch { return 'sub'; }
+};
+const firstAniPmVisit = () => {
+  try {
+    if (localStorage.getItem('mh:anipm-note') === 'seen') return false;
+    localStorage.setItem('mh:anipm-note', 'seen');
+    return true;
+  } catch { return false; }
+};
+const sameAni = (a, b) => (!a && !b) || (!!a && !!b && a.anilistId === b.anilistId && a.aniEpisode === b.aniEpisode && a.season === b.season && a.episode === b.episode);
+// A history item (or resume point) on ani.pm, as the exact entry and episode it played.
+const aniServerOf = (server) => (server?.sourceId === 'anipm' && server.anilistId && server.aniEpisode ? server : null);
 
 const HIDE_UI_MS = 3000;
 const BACKUP_TIMEOUT_MS = 12000;
@@ -165,7 +185,16 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const [phone] = useState(isPhone);
   const [ios] = useState(isIOS);
   const [touch] = useState(isCoarse);
-  const [sourceId, setSourceId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.sourceId : STREAM_SOURCES[0].id));
+  // Resume on ani.pm (spec 0009, AC-10): the stored AniList entry and episode win over a fresh
+  // match, once ani.pm confirms it still has that episode (aniPinStatus).
+  const resumeAni = !joinRoomId ? aniServerOf(resume?.server) : null;
+  const [aniPin, setAniPin] = useState(() => (resumeAni ? { anilistId: resumeAni.anilistId, aniEpisode: resumeAni.aniEpisode, season: isTV ? resume.season || 1 : null, episode: isTV ? resume.episode || 1 : null } : null));
+  const [aniPinStatus, setAniPinStatus] = useState(resumeAni ? 'checking' : null);
+  const [aniLang, setAniLang] = useState(() => (resumeAni?.lang === 'dub' || resumeAni?.lang === 'sub' ? resumeAni.lang : readAniLang()));
+  // Where this browser stopped on each ani.pm entry and episode ("a|ep" → second): the start point
+  // when ani.pm loads that same episode again (history item, then this session's own playback).
+  const aniSpots = useRef(resumeAni ? { [`${resumeAni.anilistId}|${resumeAni.aniEpisode}`]: Number(resume.t) || 0 } : {});
+  const [sourceId, setSourceId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.sourceId : resumeAni ? 'anipm' : STREAM_SOURCES[0].id));
   // A room link opens on the room's server; otherwise the first server of the set order (frameX.js).
   const [providerId, setProviderId] = useState(() => (usableSource(joinServer?.sourceId, touch) ? joinServer.providerId || null : FIRST_PROVIDER));
   const [providers, setProviders] = useState([]);
@@ -217,13 +246,21 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
 
   const source = STREAM_SOURCES.find((s) => s.id === sourceId) || STREAM_SOURCES[0];
   const isFrameX = source.id === 'framex';
+  // ani.pm (spec 0009): anime only, its own player, unsandboxed, nothing of ours over it.
+  const isAniPm = source.id === 'anipm';
+  // The AniList entry and episode the ani.pm frame plays, with the TMDB season and episode it is
+  // for. Set from the room, a resume pin or the option (see "ANI.PM" below), never guessed here.
+  const [aniLoaded, setAniLoaded] = useState(null);
   // Phones and tablets use frameXTV's OWN player (its controls, full screen and subtitle menu),
   // sandboxed (see FRAME_SANDBOX): no pop ups, no new tabs, no redirects of this page. Desktop is
   // unchanged: our player, no sandbox, backups offered.
   // Desktop also uses it while picking an audio dub (dubMode).
-  const ownControls = touch || dubMode;
+  const ownControls = touch || dubMode || isAniPm;
   const custom = isFrameX && !ownControls;
-  const loadKey = `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}${dubMode ? '|own' : ''}`;
+  // ani.pm reloads only when its entry or episode changes (Sub or Dub switches in place).
+  const loadKey = isAniPm
+    ? `anipm|${aniLoaded?.anilistId || ''}|${aniLoaded?.aniEpisode || ''}|${reloadKey}`
+    : `${sourceId}|${providerId || 'auto'}|${season}|${episode}|${reloadKey}${dubMode ? '|own' : ''}`;
   const episodeKey = `${season}|${episode}|${reloadKey}`;
   const poster = movie.backdrop_path ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}` : (movie.backdrop ? String(movie.backdrop).replace('/t/p/original', '/t/p/w1280') : null);
   const progressRef = { id: movie.id, isTV, season, episode };
@@ -258,6 +295,14 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const likelyBlockedRef = useRef(false);
   const handleFrameXSilent = useCallback(() => { if (!likelyBlockedRef.current) rotateRef.current(); }, []);
   const player = useFrameXPlayer({ frameRef, active: isFrameX, loadKey, onFail: handleFrameXFail, onSilent: handleFrameXSilent });
+  // ani.pm's player: the viewer's own actions inside its controls go to the room (see onAniUser).
+  const aniUserRef = useRef(() => {});
+  const onAniUser = useCallback((action, data) => aniUserRef.current(action, data), []);
+  const ani = useAniPmPlayer({ frameRef, active: isAniPm && !!aniLoaded, loadKey, lang: aniLang, onUserAction: onAniUser });
+  // The player that reports time: history, the room and the next episode countdown read this one.
+  const tp = isAniPm ? ani : player;
+  // Is ani.pm an option for this episode, and which entry and episode (spec 0009, state machine).
+  const aniOption = useAniPmOption({ movie, isTV, season: isTV ? season : null, episode: isTV ? episode : null, lang: aniLang });
   // Meanwhile, find the servers with nothing for this episode so the rotation skips them.
   useEffect(() => {
     if (!isFrameX || !resolved) return undefined;
@@ -305,6 +350,16 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
             if (isTV) { setSeason(s); setEpisode(e); }
             const local = loadProgress({ id: movie.id, isTV, season: s, episode: e })?.t || 0;
             setStartAt(from.t || local);
+            // Last watched on ani.pm: reopen that exact entry and episode there (spec 0009, AC-10).
+            const aniFrom = aniServerOf(from.server);
+            if (aniFrom) {
+              aniSpots.current[`${aniFrom.anilistId}|${aniFrom.aniEpisode}`] = from.t || 0;
+              setAniPin({ anilistId: aniFrom.anilistId, aniEpisode: aniFrom.aniEpisode, season: s, episode: e });
+              setAniPinStatus('checking');
+              setAniLang(aniFrom.lang === 'dub' ? 'dub' : 'sub');
+              setAutoServer(false);
+              setSourceId('anipm');
+            }
           }
         } catch (err) { console.error('Resume lookup:', err); }
       } else if (isTV) {
@@ -341,13 +396,20 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   }, [movie.id, season]);
 
   // History: the title and episode as soon as it starts, then the resume point while it plays
-  // (frameXTV only; backups report no time) and once more on close.
+  // (frameXTV and ani.pm; backups report no time) and once more on close. Each record says which
+  // server it played on (spec 0009): on ani.pm the exact entry, episode and language.
+  // On ani.pm the frame must already be on this TMDB episode, so a record never pairs a new
+  // episode with the previous ani.pm episode.
+  const aniInStep = !isAniPm || (!!aniLoaded && (!isTV || (aniLoaded.season === season && aniLoaded.episode === episode)));
+  const historyServer = isAniPm
+    ? (aniLoaded ? { sourceId: 'anipm', anilistId: aniLoaded.anilistId, aniEpisode: aniLoaded.aniEpisode, lang: aniLang } : undefined)
+    : { sourceId: 'framex', providerId };
   const recordRef = useRef(null);
   recordRef.current = (t, duration, s = season, e = episode) => {
-    if (!uid || !resolved) return;
-    recordWatch(uid, movie, { season: s, episode: e, t, duration }).catch((err) => console.error('History update:', err));
+    if (!uid || !resolved || !aniInStep) return;
+    recordWatch(uid, movie, { season: s, episode: e, t, duration, server: historyServer }).catch((err) => console.error('History update:', err));
   };
-  useEffect(() => { if (resolved && uid && movie.id) recordRef.current(); }, [resolved, uid, movie.id, season, episode]);
+  useEffect(() => { if (resolved && uid && movie.id && aniInStep) recordRef.current(); }, [resolved, uid, movie.id, season, episode, aniInStep, isAniPm]);
 
   // --- TRACKER (existing behavior) ---
   useEffect(() => {
@@ -382,33 +444,36 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   useEffect(() => {
     if (isFrameX && player.currentTime > 0) saveProgress(progressRef, player.currentTime, player.duration);
   }, [progressBucket]);
-  const historyBucket = Math.floor(player.currentTime / HISTORY_SAVE_SEC);
+  const tracked = (isFrameX || isAniPm) && aniInStep;
+  const historyBucket = Math.floor(tp.currentTime / HISTORY_SAVE_SEC);
   const lastPlayback = useRef(null);
   useEffect(() => {
-    if (!isFrameX || !(player.duration > 0) || player.ended) return;
-    if (player.currentTime > 5) recordRef.current(player.currentTime, player.duration);
+    if (!tracked || !(tp.duration > 0) || tp.ended) return;
+    if (tp.currentTime > 5) recordRef.current(tp.currentTime, tp.duration);
   }, [historyBucket]);
   // Ended: the resume point clears (recordWatch treats the last 90 s as finished).
   useEffect(() => {
-    if (!isFrameX || !player.ended || !(player.duration > 0)) return;
+    if (!tracked || !tp.ended || !(tp.duration > 0)) return;
     lastPlayback.current = null;
-    recordRef.current(player.duration, player.duration);
-  }, [player.ended]);
+    recordRef.current(tp.duration, tp.duration);
+  }, [tp.ended]);
   // Closing the player: save exactly where it stopped, for the episode it was on.
   useEffect(() => {
-    if (isFrameX && player.duration > 0 && !player.ended && player.currentTime > 5) {
-      lastPlayback.current = { t: player.currentTime, duration: player.duration, season, episode };
+    if (tracked && tp.duration > 0 && !tp.ended && tp.currentTime > 5) {
+      lastPlayback.current = { t: tp.currentTime, duration: tp.duration, season, episode };
+      if (isAniPm) aniSpots.current[`${aniLoaded.anilistId}|${aniLoaded.aniEpisode}`] = tp.currentTime;
     }
-  }, [player.currentTime]);
-  useEffect(() => { lastPlayback.current = null; }, [season, episode]);
+  }, [tp.currentTime]);
+  useEffect(() => { lastPlayback.current = null; }, [season, episode, sourceId]);
   useEffect(() => () => {
     const last = lastPlayback.current;
     if (last) recordRef.current(last.t, last.duration, last.season, last.episode);
   }, []);
 
   // --- BACKUP SOURCES: their iframe must load within BACKUP_TIMEOUT_MS, else back to our player ---
+  // (Not ani.pm: it is never left on its own; its own states say what is wrong.)
   useEffect(() => {
-    if (isFrameX || !autoSwitch || !backupLoading) return undefined;
+    if (isFrameX || isAniPm || !autoSwitch || !backupLoading) return undefined;
     const t = setTimeout(() => {
       setFailedSources((prev) => [...new Set([...prev, sourceId])]);
       setSourceId('framex');
@@ -441,7 +506,10 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   roomIdRef.current = roomId;
   const [showTogether, setShowTogether] = useState(!!joinRoomId);
   const [startingRoom, setStartingRoom] = useState(false);
-  const roomServer = useMemo(() => ({ sourceId, providerId }), [sourceId, providerId]);
+  // On ani.pm the room's server names the exact AniList entry and ani.pm episode (spec 0009).
+  const roomServer = useMemo(() => (isAniPm && aniLoaded
+    ? { sourceId: 'anipm', providerId: null, anilistId: aniLoaded.anilistId, aniEpisode: aniLoaded.aniEpisode }
+    : { sourceId, providerId }), [sourceId, providerId, isAniPm, aniLoaded]);
   // Someone switched the room's server: follow it from the room's second. Phones only run
   // sandboxed sources, so a server they can not play is skipped with a note.
   const followServer = useCallback((next, t) => {
@@ -452,6 +520,8 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     }
     setStartAt(Math.max(0, t));
     setFailedSources((prev) => prev.filter((f) => f !== next.sourceId));
+    // ani.pm: the room's entry and episode load from the room itself (see ANI.PM below).
+    if (next.sourceId === 'anipm') setDubMode(false);
     setSourceId(next.sourceId);
     setProviderId(next.providerId || null);
     setBackupLoading(true);
@@ -463,8 +533,118 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // The room's audio language changed (spec 0007): applied by the audio section below.
   const applyRoomAudioRef = useRef(() => {});
   const followAudio = useCallback((audio, t) => applyRoomAudioRef.current(audio, t), []);
-  const together = useWatchTogether({ roomId, user: currentUser, player, season, episode, server: roomServer, onEpisode: loadEpisode, onServer: followServer, onSubs: followSubs, onAudio: followAudio });
+  const together = useWatchTogether({ roomId, user: currentUser, player: tp, season, episode, server: roomServer, onEpisode: loadEpisode, onServer: followServer, onSubs: followSubs, onAudio: followAudio });
   const inRoom = together.syncing;
+
+  // --- ANI.PM (spec 0009) ---
+  // What the ani.pm frame plays, in order: the room's entry and episode (every member loads the
+  // room's, never their own match), a Resume pin from history, else this browser's match. While a
+  // Sub or Dub check runs for the same episode, it keeps playing.
+  const roomSrv = together.room?.server;
+  const roomAni = inRoom && roomSrv?.sourceId === 'anipm' && roomSrv.anilistId && roomSrv.aniEpisode
+    ? { anilistId: roomSrv.anilistId, aniEpisode: roomSrv.aniEpisode, season: isTV ? together.room.season ?? null : null, episode: isTV ? together.room.episode ?? null : null }
+    : null;
+  const onThisEpisode = (x) => !!x && (!isTV || (x.season === season && x.episode === episode));
+  const pinValid = aniPinStatus === 'ok' && onThisEpisode(aniPin);
+  let aniWanted = null;
+  if (isAniPm) {
+    if (roomAni) aniWanted = onThisEpisode(roomAni) ? roomAni : null;
+    else if (pinValid) aniWanted = aniPin;
+    else if (aniOption.state === 'ready') aniWanted = { ...aniOption.target, season: isTV ? season : null, episode: isTV ? episode : null };
+    else if (aniOption.state === 'checking' && onThisEpisode(aniLoaded)) aniWanted = aniLoaded;
+  }
+  useEffect(() => {
+    setAniLoaded((cur) => (sameAni(cur, aniWanted) ? cur : aniWanted));
+  }, [aniWanted?.anilistId, aniWanted?.aniEpisode, aniWanted?.season, aniWanted?.episode]);
+
+  // Resume on ani.pm: only once ani.pm confirms that episode; otherwise the MovieHub server at the
+  // same second, and say so (AC-10).
+  useEffect(() => {
+    if (aniPinStatus !== 'checking' || !aniPin) return undefined;
+    let cancelled = false;
+    const fallBack = (msg) => {
+      if (cancelled) return;
+      setAniPin(null);
+      setAniPinStatus(null);
+      setSourceId('framex');
+      toast(msg, { id: 'anipm-resume', icon: '📺', duration: 6000 });
+    };
+    aniPm.series(aniPin.anilistId).then((data) => {
+      if (cancelled) return;
+      const ep = (data?.episodeList || []).find((x) => Number(x.number) === aniPin.aniEpisode);
+      if (!ep || !(ep.available?.sub || ep.available?.dub)) { fallBack('That episode is not on ani.pm right now, so it opens on the MovieHub server at the same spot.'); return; }
+      if (!ep.available?.[aniLang]) setAniLang(ep.available.sub ? 'sub' : 'dub');
+      setAniPinStatus('ok');
+    }, () => fallBack('ani.pm could not be reached, so this opens on the MovieHub server at the same spot.'));
+    return () => { cancelled = true; };
+  }, [aniPinStatus, aniPin?.anilistId, aniPin?.aniEpisode]);
+
+  // On ani.pm by this browser's own match, and the match went bad (a new episode that is not on
+  // ani.pm, no dub, not sure which show, or ani.pm unreachable): back to the MovieHub server.
+  const aniGone = isAniPm && !roomAni && !pinValid && aniPinStatus !== 'checking'
+    && (aniOption.state === 'unavailable' || aniOption.state === 'unsure' || aniOption.state === 'error');
+  useEffect(() => {
+    if (!aniGone) return;
+    const why = aniOption.state === 'unavailable' ? `${aniOption.reason}.` : aniOption.state === 'unsure' ? 'Pick the show for this season in Settings to use ani.pm.' : 'Could not check ani.pm.';
+    toast(`${why} Back on the MovieHub server.`, { id: 'anipm-gone', icon: '📺', duration: 6000 });
+    setSourceId('framex');
+  }, [aniGone]);
+
+  // A pick in Find on ani.pm (or Reset) plays as soon as its check is done.
+  const [aniPending, setAniPending] = useState(false);
+  useEffect(() => {
+    if (!aniPending || aniOption.state === 'checking') return;
+    setAniPending(false);
+    if (aniOption.state === 'ready') latest.current.chooseSource('anipm');
+    else if (aniOption.state === 'unavailable') toast(`${aniOption.reason}.`, { id: 'anipm-pick', icon: '📺' });
+  }, [aniPending, aniOption.state]);
+  const pickAniShow = (media) => { aniOption.pickMedia(media); setPanel(null); setAniPending(true); };
+  const resetAniShow = () => { aniOption.resetPick(); setPanel(null); setAniPending(isAniPm); };
+
+  // Sub or Dub (AC-8): remembered here, passed in the embed URL, switched in place (setLanguage).
+  // In a room it rides on the room's audio field, following the control mode like subtitles.
+  const chooseAniLang = (lang) => {
+    try { localStorage.setItem('mh:anime-lang', lang); } catch { /* storage blocked: this visit only */ }
+    if (isAniPm && inRoom) {
+      const shared = together.act('audio', { audio: { lang, label: lang === 'dub' ? 'Dub' : 'Sub', at: Date.now() } });
+      if (!shared) toast("Sub or Dub is just for you. The host sets the room's language.", { id: 'audio-local', icon: '👥' });
+    }
+    setAniLang(lang); // from our switch, ani.pm follows below; from ani.pm's own menu, it already has
+  };
+  useEffect(() => {
+    if (isAniPm && ani.ready && ani.lang !== aniLang) ani.setLanguage(aniLang);
+  }, [isAniPm, ani.ready, aniLang]);
+
+  // The ad tab note: the first time ani.pm loads in this browser, chosen by the viewer or the room.
+  const [aniNote, setAniNote] = useState(false);
+  useEffect(() => { if (isAniPm && aniLoaded && firstAniPmVisit()) setAniNote(true); }, [isAniPm, !!aniLoaded]);
+
+  // The viewer's own play, pause, seek or language change inside ani.pm's controls (echoes of our
+  // commands never arrive here). In a room it is published like our own buttons; a member who may
+  // not control is put back to the room's state after 0.5 s, once per action (AC-9).
+  const aniRef = useRef(ani);
+  aniRef.current = ani;
+  const togetherRef = useRef(together);
+  togetherRef.current = together;
+  const putBack = useRef(null);
+  useEffect(() => () => clearTimeout(putBack.current), []);
+  aniUserRef.current = (action, data) => {
+    if (!isAniPm) return;
+    if (action === 'language') { chooseAniLang(data.lang); return; }
+    if (!inRoom) return;
+    const position = action === 'seek' ? data.position : ani.currentTime;
+    const playing = action === 'play' ? true : action === 'pause' ? false : !ani.paused;
+    if (together.act(action, { playing, position })) return;
+    clearTimeout(putBack.current);
+    putBack.current = setTimeout(() => {
+      const room = togetherRef.current;
+      const p = aniRef.current;
+      if (!room.room) return;
+      p.seek(room.expectedTime());
+      if (room.room.playing) p.play(); else p.pause();
+    }, 500);
+    toast('The host controls playback in this room', { id: 'host-only', icon: '👥' });
+  };
   // A person's own play, pause, seek or episode change goes to the room first. Members who may not
   // control right now (host only mode) are held with a note; everyone else acts as usual.
   const share = (action, state) => {
@@ -480,9 +660,11 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
       const id = await createRoom(currentUser, movie, {
         season: isTV ? season : null,
         episode: isTV ? episode : null,
-        position: player.duration > 0 ? player.currentTime : startAt,
-        playing: !player.paused,
-        server: { sourceId, providerId },
+        position: tp.duration > 0 ? tp.currentTime : startAt,
+        playing: !tp.paused,
+        server: roomServer,
+        // On ani.pm the room starts with this viewer's Sub or Dub (spec 0009, AC-8).
+        audio: isAniPm ? { lang: aniLang, label: aniLang === 'dub' ? 'Dub' : 'Sub', at: Date.now() } : null,
       });
       setRoomId(id);
       setShowTogether(true);
@@ -499,9 +681,9 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const syncNow = () => {
     const t = together.expectedTime();
     if (together.room?.season && (together.room.season !== season || together.room.episode !== episode)) { loadEpisode(together.room.season, together.room.episode, t); return; }
-    if (custom && player.duration > 0) {
-      player.seek(t);
-      if (together.room?.playing) player.play();
+    if ((custom || isAniPm) && tp.duration > 0) {
+      tp.seek(t);
+      if (together.room?.playing) tp.play(); else if (isAniPm) tp.pause();
     } else {
       setStartAt(t);
       setReloadKey((k) => k + 1);
@@ -534,19 +716,35 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   }, [knockIds]);
   useEffect(() => () => shownKnocks.current.forEach((guestUid) => toast.dismiss(`knock-${guestUid}`)), []);
 
-  // In a room everyone starts the new episode from the top together.
-  const goToEpisode = useCallback((s, e) => {
+  // In a room everyone starts the new episode from the top together. On ani.pm the room's new
+  // AniList entry and episode go in the same write (spec 0009); an episode ani.pm does not have
+  // moves the room back to the MovieHub server.
+  const goToEpisode = useCallback(async (s, e) => {
+    if (isAniPm && inRoom && together.allowed) {
+      const next = await aniOption.resolveFor(s, e);
+      const server = next.state === 'ready'
+        ? { sourceId: 'anipm', providerId: null, ...next.target }
+        : { sourceId: 'framex', providerId: null };
+      if (!share('episode', { season: s, episode: e, position: 0, playing: true, server })) return;
+      if (next.state !== 'ready') {
+        toast(`${next.reason || 'Not on ani.pm'}. The room is back on the MovieHub server.`, { id: 'anipm-gone', icon: '📺' });
+        setSourceId('framex');
+      }
+      loadEpisode(s, e, 0);
+      return;
+    }
     if (!share('episode', { season: s, episode: e, position: 0, playing: true })) return;
     loadEpisode(s, e, inRoom ? 0 : undefined);
-  }, [loadEpisode, together.act, inRoom]);
+  }, [loadEpisode, together.act, together.allowed, inRoom, isAniPm, aniOption.resolveFor]);
 
   const handleNextEpisode = useCallback(() => {
     if (episode < episodesList.length) goToEpisode(season, episode + 1);
     else if (season < seasonCount) goToEpisode(season + 1, 1);
   }, [episode, episodesList.length, season, seasonCount, goToEpisode]);
 
-  // Ended (frameXTV:ended): next episode after a short countdown, like Netflix.
-  const ended = isFrameX && player.ended;
+  // Ended (frameXTV:ended, or ani.pm's own `ended`; its auto next is off): next episode after a
+  // short countdown, like Netflix.
+  const ended = (isFrameX || isAniPm) && tp.ended;
   const [endedFor, setEndedFor] = useState(null);
   if (ended && endedFor !== loadKey) {
     setEndedFor(loadKey);
@@ -556,7 +754,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // frameXTV starts the next episode inside its frame on its own; hold it so our countdown (and our
   // episode, history and tracker state) stays in charge.
   useEffect(() => {
-    if (ended) player.send('pause');
+    if (ended && isFrameX) player.send('pause');
   }, [ended]);
   useEffect(() => {
     if (nextUp === null) return undefined;
@@ -692,11 +890,29 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   }, [player.currentTime, player.playing, speed]);
 
   // --- SOURCE / SERVER CHANGES (resume from where you are) ---
-  const resumeHere = () => setStartAt(isFrameX && player.currentTime > 5 ? player.currentTime : startAt);
+  const resumeHere = () => setStartAt((isFrameX || isAniPm) && tp.currentTime > 5 ? tp.currentTime : startAt);
+
+  // ani.pm, chosen by the viewer (spec 0009): plays only from `ready`; `unsure` opens Find on
+  // ani.pm. In a room the entry, episode and Sub or Dub go to everyone in one write.
+  const chooseAniPm = () => {
+    if (aniOption.state === 'unsure') { setPanel('find'); return; }
+    if (aniOption.state !== 'ready') return;
+    const server = { sourceId: 'anipm', providerId: null, ...aniOption.target };
+    const audio = { lang: aniLang, label: aniLang === 'dub' ? 'Dub' : 'Sub', at: Date.now() };
+    if (!share('server', { server, audio })) return;
+    setAutoServer(false);
+    setDubMode(false);
+    setAniPin(null);
+    setAniPinStatus(null);
+    if (inRoom) setStartAt(together.expectedTime());
+    setSourceId('anipm');
+    setPanel(null);
+  };
 
   // In a room the server is a playback action like any other: it goes to the room first (held for
   // members who may not control), and everyone else follows it.
   const chooseSource = (id) => {
+    if (id === 'anipm') { chooseAniPm(); return; }
     if (!share('server', { server: { sourceId: id, providerId: null } })) return;
     setAutoServer(false);
     resumeHere();
@@ -757,6 +973,8 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   applyRoomAudioRef.current = (audio, t) => {
     setRoomAudio(audio);
     if (!audio) return;
+    // ani.pm's Sub or Dub (spec 0009): switched in place at the same second, not the dub player.
+    if (audio.lang === 'sub' || audio.lang === 'dub') { setAniLang(audio.lang); return; }
     enterDub(t);
     toast(`Room audio: ${audio.label}. Pick it from the audio button inside the video.`, { id: 'dub', icon: '🎧', duration: 8000 });
   };
@@ -949,8 +1167,11 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     return () => { document.body.style.overflow = prev; };
   }, []);
 
+  // ani.pm starts at the room's second in a room, else where this browser (or the history item)
+  // left that same entry and episode, else at 0 (spec 0009, Value sourcing).
+  const aniStart = aniLoaded ? (inRoom ? startAt : aniSpots.current[`${aniLoaded.anilistId}|${aniLoaded.aniEpisode}`] || 0) : 0;
   const iframeSrc = useMemo(
-    () => source.url({ id: movie.id, isTV, season, episode, start: startAt, provider: providerId, title, poster, ownControls }),
+    () => source.url({ id: movie.id, isTV, season, episode, start: isAniPm ? aniStart : startAt, provider: providerId, title, poster, ownControls, anilistId: aniLoaded?.anilistId, aniEpisode: aniLoaded?.aniEpisode, lang: aniLang }),
     [loadKey]
   );
 
@@ -959,9 +1180,12 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const serverName = isFrameX ? (providers.find((p) => p.id === providerId)?.name || 'Auto server') : source.name;
   // frameXTV stays hidden until it reports a stream (or the viewer has to click it to start).
   // Our controls: frameXTV stays hidden until it reports a stream. Its own player: shown once its page is up.
-  const loading = isFrameX
-    ? (custom ? !player.duration && !player.failed && !noStream && !frameTaps : !player.ready && !player.failed)
-    : backupLoading;
+  // ani.pm: shown the moment its frame exists (nothing of ours over it); loading only before that.
+  const loading = isAniPm
+    ? !aniLoaded
+    : isFrameX
+      ? (custom ? !player.duration && !player.failed && !noStream && !frameTaps : !player.ready && !player.failed)
+      : backupLoading;
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const remaining = player.duration ? player.duration - player.currentTime : 0;
 
@@ -978,7 +1202,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     navigate(`/${m.type || (isTV ? 'tv' : 'movie')}/${m.id}`);
   }, [navigate, isTV]);
   if (inline && panel === 'episodes') setPanel(null); // the list is on the page in this layout
-  const detailsNotice = !isFrameX ? `${source.name} is a backup source with its own player.` : null;
+  const detailsNotice = isAniPm ? 'ani.pm is the anime backup server. It plays in its own player.' : !isFrameX ? `${source.name} is a backup source with its own player.` : null;
 
   const liveCount = together.members.filter((m) => m.live).length;
   const knocks = together.pending.length;
@@ -997,11 +1221,78 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     </Ctl>
   );
 
+  // --- ANI.PM CHROME (spec 0009, AC-7): our bar sits above ani.pm's frame and nothing of ours
+  // is drawn over it. Panels open beside the frame (desktop) or below it (phones).
+  const aniSettings = aniOption.state === 'none' ? null : {
+    state: aniOption.state,
+    reason: aniOption.reason,
+    lang: aniLang,
+    availability: aniOption.availability,
+    onLang: chooseAniLang,
+    onWrongShow: () => setPanel('find'),
+    onRetry: aniOption.retry,
+  };
+  const findProps = {
+    title: aniOption.basics?.name || title,
+    originalTitle: aniOption.basics?.originalName,
+    seasonLabel: isTV ? `Season ${season}` : null,
+    onPick: pickAniShow,
+    onReset: resetAniShow,
+    canReset: aniOption.via === 'manual',
+    onClose: closePanel,
+  };
+  const sidePanel = panel === 'settings' || panel === 'subtitles' || panel === 'find';
+  const dock = isAniPm && !inline
+    ? Math.max(panel === 'episodes' ? 440 : sidePanel ? 364 : 0, showTogether && roomId ? 360 : 0)
+    : 0;
+  // Phones: the sticky bar (48 px) and the 16:9 player above; sheets and the room panel go below.
+  const belowPlayer = 'calc(48px + min(56.25vw, 100svh - 48px))';
+  const aniStatus = !isAniPm ? null
+    : ani.noResponse ? { text: 'ani.pm did not respond', action: inRoom ? { label: 'Sync now', run: syncNow } : { label: 'Try again', run: reload } }
+      : !aniLoaded ? { text: 'Connecting to ani.pm…' }
+        : ani.autoplayBlocked ? { text: 'Press play in the player' }
+          : aniNote ? { text: 'This server may open an ad tab now and then', icon: true }
+            : null;
+  const aniStatusLine = aniStatus && (
+    <p className="flex min-w-0 items-center gap-1.5 text-xs text-white/70" role="status">
+      {aniStatus.icon && <Megaphone size={12} className="shrink-0 text-rating" aria-hidden="true" />}
+      <span className="truncate">{aniStatus.text}</span>
+      {aniStatus.action && <button type="button" onClick={aniStatus.action.run} className="shrink-0 font-semibold text-white underline underline-offset-2">{aniStatus.action.label}</button>}
+    </p>
+  );
+  const noDub = !!aniOption.availability && !aniOption.availability.dub && aniLang !== 'dub';
+  const subDubSwitch = (
+    <div role="radiogroup" aria-label="Sub or Dub" className="flex shrink-0 rounded-full bg-white/10 p-0.5">
+      {ANI_LANGS.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="radio"
+          aria-checked={aniLang === o.id}
+          disabled={o.id === 'dub' && noDub}
+          title={o.id === 'dub' && noDub ? 'No dub on ani.pm for this episode' : undefined}
+          onClick={() => aniLang !== o.id && chooseAniLang(o.id)}
+          className={`h-8 rounded-full px-3 text-xs font-semibold motion-safe:transition-colors disabled:opacity-35 ${aniLang === o.id ? 'bg-white text-black' : 'text-white/75 hover:text-white'}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+  const aniNextUp = isAniPm && nextUp !== null && (
+    <div role="status" className="flex shrink-0 items-center gap-1 rounded-full bg-white/10 py-1 pl-3 pr-1 text-xs">
+      <span className="tabular-nums text-white/80">Next in {nextUp}s</span>
+      <button type="button" onClick={handleNextEpisode} className="rounded-full bg-white px-2.5 py-1 font-semibold text-black hover:bg-white/90">Play now</button>
+      <button type="button" onClick={() => setNextUp(null)} className="rounded-full px-2 py-1 text-white/70 hover:bg-white/10 hover:text-white">Cancel</button>
+    </div>
+  );
+
   const settingsProps = {
     onClose: closePanel,
     // Phones and tablets: only sources that run sandboxed (no pop ups, no redirects). VidLink and VidSrc
     // refuse to load in a sandboxed frame (checked 2026-10-17), so they are not offered there.
-    sources: ownControls ? STREAM_SOURCES.filter((src) => src.sandbox) : STREAM_SOURCES,
+    sources: STREAM_SOURCES.filter((src) => (src.anime ? aniOption.state !== 'none' : !(touch || dubMode) || src.sandbox)),
+    aniPm: aniSettings,
     sourceId,
     onSource: chooseSource,
     failedSources,
@@ -1048,13 +1339,21 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
 
       {/* Phones with frameXTV's own player: our back bar sits above the video, not on top of its controls */}
       {inline && ownControls && (
-        <div className="sticky top-0 z-30 flex h-12 items-center gap-1 bg-[#050505] pr-3">
+        <div className="sticky top-0 z-30 flex h-12 items-center gap-1 bg-[#050505] pr-2">
           <Ctl label="Back" onClick={onClose}><ArrowLeft size={22} aria-hidden="true" /></Ctl>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold leading-tight">{title}</p>
-            <p className="truncate text-[11px] text-white/55">{subtitle}</p>
+            {isAniPm && nextUp !== null ? (
+              <p className="flex items-center gap-2 text-[11px] text-white/70" role="status">
+                <span className="tabular-nums">Next in {nextUp}s</span>
+                <button type="button" onClick={handleNextEpisode} className="font-semibold text-white underline underline-offset-2">Play now</button>
+                <button type="button" onClick={() => setNextUp(null)} className="text-white/60 underline underline-offset-2">Cancel</button>
+              </p>
+            ) : (aniStatusLine || <p className="truncate text-[11px] text-white/55">{subtitle}</p>)}
           </div>
-          <span className="ml-auto">{togetherButton}</span>
+          {isAniPm && subDubSwitch}
+          {isAniPm && <Ctl label="Servers and settings" onClick={openSettings} active={sidePanel} data-settings-toggle><Settings size={20} aria-hidden="true" /></Ctl>}
+          {togetherButton}
         </div>
       )}
 
@@ -1066,10 +1365,26 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
         style={stageStyle}
         className={`@container relative overflow-hidden bg-black ${inline ? (ownControls ? 'sticky top-12 z-20 aspect-video max-h-[calc(100svh-48px)] w-full' : 'sticky top-0 z-20 aspect-video w-full') : 'h-full w-full'} ${uiVisible || !custom ? '' : 'cursor-none'}`}
       >
+        {/* ani.pm (desktop and tablets): our bar sits above its frame, never on it */}
+        {isAniPm && !inline && (
+          <div className="absolute inset-x-0 top-0 z-30 flex h-16 items-center gap-1.5 border-b border-white/10 bg-[#050505] px-2 sm:gap-2 sm:px-4">
+            <Ctl label="Back" onClick={onClose}><ArrowLeft size={24} aria-hidden="true" /></Ctl>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-base font-semibold">{title}</h1>
+              {aniStatusLine || <p className="truncate text-xs text-white/60">{subtitle} · ani.pm</p>}
+            </div>
+            {aniNextUp}
+            {subDubSwitch}
+            {isTV && <Ctl label="Episodes" onClick={() => setPanel(panel === 'episodes' ? null : 'episodes')} active={panel === 'episodes'}><ListVideo size={20} aria-hidden="true" /></Ctl>}
+            <Ctl label="Servers and settings" onClick={() => setPanel(panel === 'settings' ? null : 'settings')} active={sidePanel} data-settings-toggle><Settings size={20} aria-hidden="true" /></Ctl>
+            {togetherButton}
+          </div>
+        )}
+
         {/* Immersive backdrop while the stream connects */}
         <AnimatePresence>
           {loading && (
-            <Motion.div key="backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.8 } }} className="pointer-events-none absolute inset-0 z-[1]">
+            <Motion.div key="backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: isAniPm ? 0 : 0.8 } }} className="pointer-events-none absolute inset-0 z-[1]">
               {poster && <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40 blur-sm scale-105 motion-safe:animate-kenburns" />}
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_20%,#000_85%)]" />
             </Motion.div>
@@ -1077,24 +1392,25 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
         </AnimatePresence>
 
         {/* No playable stream: the frame is unloaded so nothing keeps playing out of sight */}
-        {!noStream && resolved && (
+        {!noStream && resolved && (!isAniPm || aniLoaded) && (
           <iframe
             ref={frameRef}
             key={loadKey}
             title={`${title} video player`}
             src={iframeSrc}
             // When the embed shows its own controls, start it below our top bar so neither covers the other.
-            className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom || inline ? 'top-0 h-full' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            className={`absolute inset-x-0 bottom-0 w-full border-0 motion-safe:transition-opacity duration-700 ${custom || inline ? 'top-0 h-full' : isAniPm ? 'top-16 h-[calc(100%-64px)]' : 'top-[88px] h-[calc(100%-88px)]'} ${loading ? 'opacity-0' : 'opacity-100'}`}
+            style={dock ? { width: `calc(100% - ${dock}px)` } : undefined}
+            allow={isAniPm ? 'autoplay; fullscreen; picture-in-picture; encrypted-media; screen-wake-lock' : 'autoplay; fullscreen; encrypted-media; picture-in-picture'}
             sandbox={ownControls && source.sandbox ? FRAME_SANDBOX : undefined}
             allowFullScreen
             referrerPolicy="origin"
-            onLoad={() => setBackupLoading(false)}
+            onLoad={() => { setBackupLoading(false); if (isAniPm) ani.connect(); }}
           />
         )}
 
         {/* Backup sources: first click is absorbed (blocks pop-up ads), then their own controls take over */}
-        {!isFrameX && shieldActive && !backupLoading && (
+        {!isFrameX && !isAniPm && shieldActive && !backupLoading && (
           <button
             type="button"
             onClick={() => setShieldActive(false)}
@@ -1122,7 +1438,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
           <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 text-center px-6">
             <Spinner size={inline ? 40 : 52} />
             <p className="text-sm font-medium text-white/80">Connecting to {isFrameX ? `MovieHub Server · ${serverName}` : source.name}…</p>
-            {autoSwitch && !inline && <p className="text-xs text-white/45">{tried.key === episodeKey && tried.ids.length ? `Server ${tried.ids.length + 1}: the last one had no stream we can play.` : 'If this stalls, we try another server automatically.'}</p>}
+            {autoSwitch && !inline && !isAniPm && <p className="text-xs text-white/45">{tried.key === episodeKey && tried.ids.length ? `Server ${tried.ids.length + 1}: the last one had no stream we can play.` : 'If this stalls, we try another server automatically.'}</p>}
           </div>
         )}
 
@@ -1218,14 +1534,24 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
               <div className={`flex flex-wrap justify-center gap-3 ${inline ? 'mt-3' : 'mt-6'}`}>
                 <button type="button" onClick={reload} className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90"><RefreshCcw size={16} aria-hidden="true" /> Try again</button>
                 <button type="button" onClick={() => setPanel('settings')} data-settings-toggle className="inline-flex h-11 items-center gap-2 rounded-full border border-white/20 px-5 text-sm font-semibold hover:bg-white/10"><Settings size={16} aria-hidden="true" /> Choose server</button>
+                {/* Anime only (spec 0009): the ani.pm backup, by hand */}
+                {aniOption.state === 'error' && (
+                  <button type="button" onClick={aniOption.retry} className="inline-flex h-11 items-center gap-2 rounded-full border border-white/20 px-5 text-sm font-semibold hover:bg-white/10">Could not check ani.pm · Try again</button>
+                )}
+                {aniOption.state !== 'none' && aniOption.state !== 'error' && (
+                  <button type="button" onClick={() => chooseSource('anipm')} disabled={aniOption.state === 'checking' || aniOption.state === 'unavailable'} className="inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-40">
+                    {aniOption.state === 'checking' && <Spinner size={14} />} Try ani.pm
+                  </button>
+                )}
               </div>
+              {aniOption.state === 'unavailable' && <p className="mt-2 text-xs text-white/50">ani.pm: {aniOption.reason}</p>}
             </div>
           </div>
         )}
 
         {/* Next episode countdown */}
         <AnimatePresence>
-          {nextUp !== null && (
+          {nextUp !== null && !isAniPm && (
             <Motion.div
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
               className={`absolute z-30 rounded-panel border border-white/10 bg-[#111116]/95 backdrop-blur-xl shadow-card ${inline ? 'inset-x-2 bottom-2 p-3' : 'bottom-28 right-4 sm:right-8 w-[min(340px,calc(100vw-32px))] p-4'}`}
@@ -1244,7 +1570,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
         </AnimatePresence>
 
         {/* TOP BAR (not with frameXTV's own player on phones: the back bar above replaces it) */}
-        <div hidden={inline && ownControls} className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b motion-safe:transition-opacity duration-300 ${inline ? 'from-black/75 to-transparent px-1 pt-1 pb-6' : 'from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12'} ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div hidden={(inline && ownControls) || isAniPm} className={`pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b motion-safe:transition-opacity duration-300 ${inline ? 'from-black/75 to-transparent px-1 pt-1 pb-6' : 'from-black/85 via-black/40 to-transparent px-3 sm:px-6 pt-3 sm:pt-5 pb-12'} ${uiVisible ? 'opacity-100' : 'opacity-0'}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="pointer-events-auto flex min-w-0 items-center gap-2 sm:gap-4">
               <Ctl label="Back" onClick={onClose}><ArrowLeft size={24} aria-hidden="true" /></Ctl>
@@ -1350,8 +1676,9 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
         {/* PANELS */}
         <AnimatePresence>
           {(panel === 'settings' || panel === 'subtitles') && !inline && (
-            <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position={custom ? 'bottom-24 right-3 sm:right-6' : 'top-20 right-3 sm:right-6'} />
+            <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position={custom ? 'bottom-24 right-3 sm:right-6' : isAniPm ? 'top-[76px] right-3' : 'top-20 right-3 sm:right-6'} />
           )}
+          {panel === 'find' && !inline && <FindOnAniPm key="find" {...findProps} position={isAniPm ? 'top-[76px] right-3' : 'top-20 right-3 sm:right-6'} />}
           {panel === 'episodes' && isTV && !inline && (
             <EpisodesPanel
               key="episodes"
@@ -1362,6 +1689,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
               playingEpisode={episode}
               onPick={goToEpisode}
               onClose={closePanel}
+              docked={isAniPm}
             />
           )}
         </AnimatePresence>
@@ -1380,7 +1708,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
           </div>
         )}
 
-        {!isFrameX && failedSources.length >= STREAM_SOURCES.length - 1 && !backupLoading && (
+        {!isFrameX && !isAniPm && failedSources.length >= STREAM_SOURCES.filter((src) => !src.anime).length - 1 && !backupLoading && (
           <p className="pointer-events-none absolute bottom-4 left-4 z-30 flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-xs text-white/70">
             <AlertTriangle size={14} className="text-rating" aria-hidden="true" /> Other sources failed for this title
           </p>
@@ -1410,10 +1738,26 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
 
       {/* Phone layout: settings open as a sheet over the page, not inside the small player */}
       <AnimatePresence>
-        {inline && (panel === 'settings' || panel === 'subtitles') && (
+        {inline && sidePanel && (
           <div key="settings-sheet" className="fixed inset-0 z-[510] pointer-events-none">
-            <div className="pointer-events-auto absolute inset-0 bg-black/50" aria-hidden="true" />
-            <SettingsMenu key={panel} initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'} {...settingsProps} position="pointer-events-auto inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+12px)]" />
+            {/* On ani.pm nothing may dim its frame: the sheet opens below the player instead */}
+            {!isAniPm && <div className="pointer-events-auto absolute inset-0 bg-black/50" aria-hidden="true" />}
+            {panel === 'find' ? (
+              <FindOnAniPm
+                key="find"
+                {...findProps}
+                position="pointer-events-auto inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+12px)]"
+                style={isAniPm ? { top: `calc(${belowPlayer} + 8px)`, maxHeight: `calc(100svh - ${belowPlayer} - 20px)` } : undefined}
+              />
+            ) : (
+              <SettingsMenu
+                key={panel}
+                initialTab={panel === 'subtitles' ? 'subtitles' : 'servers'}
+                {...settingsProps}
+                position="pointer-events-auto inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+12px)]"
+                style={isAniPm ? { top: `calc(${belowPlayer} + 8px)`, maxHeight: `calc(100svh - ${belowPlayer} - 20px)` } : undefined}
+              />
+            )}
           </div>
         )}
       </AnimatePresence>
@@ -1428,6 +1772,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
             onLeave={leaveTogether}
             onEnd={() => together.endForEveryone().then(leaveTogether, () => toast.error('Could not end the room. Try again.'))}
             onSyncNow={syncNow}
+            style={isAniPm && inline ? { top: belowPlayer } : undefined}
           />
         )}
       </AnimatePresence>

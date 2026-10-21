@@ -11,6 +11,20 @@ const FINISHED_LEFT_SEC = 90;
 export const itemType = (item) => item?.type || item?.media_type || (item?.first_air_date ? 'tv' : 'movie');
 const sameTitle = (a, id, type) => String(a.id) === String(id) && itemType(a) === type;
 
+// Which server the item was watched on (spec 0009): the MovieHub server, or ani.pm with the exact
+// AniList entry, episode and language, so Resume reopens the same thing on any device.
+const cleanServer = (s) => {
+  if (!s || (s.sourceId !== 'framex' && s.sourceId !== 'anipm')) return undefined;
+  const ani = s.sourceId === 'anipm';
+  return {
+    sourceId: s.sourceId,
+    providerId: ani ? null : s.providerId || null,
+    anilistId: ani ? Number(s.anilistId) || null : null,
+    aniEpisode: ani ? Number(s.aniEpisode) || null : null,
+    lang: ani ? (s.lang === 'dub' ? 'dub' : 'sub') : null,
+  };
+};
+
 const stripTmdb = (url, size) => (typeof url === 'string' && url.includes(`/t/p/${size}`) ? url.split(`/t/p/${size}`)[1] : null);
 
 // Only the fields the history UIs need. The details page hands the player the full TMDB object
@@ -33,6 +47,7 @@ const compact = (m) => {
     progressSec: Number(m.progressSec) || 0,
     duration: Number(m.duration) || 0,
     progress: Number(m.progress) || 0, // percent, 0 to 100
+    server: cleanServer(m.server),
   };
   Object.keys(item).forEach((k) => { if (item[k] === undefined) delete item[k]; });
   return item;
@@ -41,9 +56,10 @@ const compact = (m) => {
 const percent = (t, duration) => (duration > 0 ? Math.round(Math.min(100, Math.max(0, (t / duration) * 100))) : 0);
 
 // Records that a title is being watched. `t` and `duration` are optional: without them the
-// episode's saved progress is kept (same episode) or reset (another episode).
+// episode's saved progress is kept (same episode) or reset (another episode). `server` is where it
+// plays (spec 0009); left out, the item keeps the one it had.
 // A transaction, so the player's frequent writes and a second tab never overwrite each other.
-export const recordWatch = async (uid, movie, { season, episode, t, duration } = {}) => {
+export const recordWatch = async (uid, movie, { season, episode, t, duration, server } = {}) => {
   if (!uid || !movie?.id) return;
   const ref = doc(db, 'history', uid);
   const type = itemType(movie);
@@ -67,6 +83,7 @@ export const recordWatch = async (uid, movie, { season, episode, t, duration } =
       progressSec: Math.floor(progressSec),
       duration: Math.floor(dur),
       progress: percent(progressSec, dur),
+      server: server || prev?.server,
     });
     const rest = items.filter((i) => !sameTitle(i, movie.id, type)).map(compact);
     tx.set(ref, { items: [item, ...rest].slice(0, MAX_ITEMS) }, { merge: true });
@@ -95,6 +112,7 @@ export const resumeFrom = (item) => {
     duration,
     percent: duration > 0 ? percent(t, duration) : Number(item.progress) || 0,
     leftSec: duration > 0 ? Math.max(0, duration - t) : 0,
+    server: item.server || null,
   };
 };
 

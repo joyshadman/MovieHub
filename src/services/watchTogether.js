@@ -21,12 +21,24 @@ export const DRIFT_SEC = 3; // a follower seeks when it is further than this fro
 
 const roomRef = (roomId) => doc(db, 'watch_rooms', roomId);
 
+// The room's server. On ani.pm (spec 0009) it names the exact AniList entry and ani.pm episode
+// every member loads; both are null on the MovieHub server.
+const roomServerOf = (server) => {
+  const ani = server?.sourceId === 'anipm';
+  return {
+    sourceId: server?.sourceId || 'framex',
+    providerId: ani ? null : server?.providerId || null,
+    anilistId: ani ? Number(server.anilistId) || null : null,
+    aniEpisode: ani ? Number(server.aniEpisode) || null : null,
+  };
+};
+
 const nameOf = (user) => user.displayName || user.email?.split('@')[0] || 'Guest';
 const memberOf = (user, now = Date.now()) => ({ name: nameOf(user), photo: user.photoURL || null, joinedAt: now, lastSeen: now });
 
 export const roomLink = (roomId) => `${window.location.origin}/together/${roomId}`;
 
-export const createRoom = async (user, movie, { season, episode, position = 0, playing = true, server }) => {
+export const createRoom = async (user, movie, { season, episode, position = 0, playing = true, server, audio = null }) => {
   const type = itemType(movie);
   const now = Date.now();
   const ref = await addDoc(collection(db, 'watch_rooms'), {
@@ -42,9 +54,9 @@ export const createRoom = async (user, movie, { season, episode, position = 0, p
     },
     season: type === 'tv' ? season : null,
     episode: type === 'tv' ? episode : null,
-    server: { sourceId: server?.sourceId || 'framex', providerId: server?.providerId || null },
+    server: roomServerOf(server),
     subs: null,
-    audio: null,
+    audio: audio ? { lang: String(audio.lang).slice(0, 40), label: String(audio.label || audio.lang).slice(0, 40), at: audio.at || now } : null,
     playing,
     position,
     updatedAt: now,
@@ -124,7 +136,7 @@ export const publishState = (roomId, user, action, { playing, position, season, 
     position: Math.max(0, Number(position) || 0),
     season: season ?? null,
     episode: episode ?? null,
-    ...(server ? { server: { sourceId: server.sourceId, providerId: server.providerId || null } } : {}),
+    ...(server ? { server: roomServerOf(server) } : {}),
     ...(audio !== undefined ? { audio: audio ? { lang: String(audio.lang).slice(0, 40), label: String(audio.label || audio.lang).slice(0, 40), at: audio.at || now } : null } : {}),
     updatedAt: now,
     activeAt: now,

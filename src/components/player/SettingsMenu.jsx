@@ -3,6 +3,8 @@ import { motion as Motion, useReducedMotion } from 'framer-motion';
 import { Check, ChevronRight, Zap, Minus, Plus, RotateCcw, AudioLines } from 'lucide-react';
 import { SUB_BACKGROUNDS, SUB_COLORS, SUB_POSITIONS, SUB_SIZES } from '../../services/subtitles';
 import { SubtitleText } from './SubtitleOverlay';
+import { Spinner } from '../ui/feedback';
+import { ANI_LANGS } from '../../services/aniPm';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -51,6 +53,53 @@ const Tag = ({ children, tone = 'plain' }) => (
   <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${tone === 'bad' ? 'bg-accent/20 text-accent-text' : 'bg-white/10 text-white/70'}`}>{children}</span>
 );
 
+// The ani.pm source (spec 0009): anime only, in one of its option states, with Sub or Dub and
+// "Wrong show?" under it. Disabled rows say why.
+const AniPmSource = ({ source, active, ani, onSource }) => {
+  if (ani.state === 'error') {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm text-white/70">
+        <span className="min-w-0"><span className="text-white/80">{source.name}</span> · Could not check ani.pm</span>
+        <button type="button" onClick={ani.onRetry} className="shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs font-semibold text-white hover:bg-white/10">Try again</button>
+      </div>
+    );
+  }
+  const right = {
+    checking: <span className="flex items-center gap-1.5 text-[11px] text-white/50"><Spinner size={12} /> Checking</span>,
+    ready: <Tag>Anime</Tag>,
+    unsure: <Tag>Pick show</Tag>,
+    unavailable: <Tag tone="bad">{ani.reason}</Tag>,
+  }[ani.state];
+  return (
+    <>
+      <Row active={active} onClick={() => onSource(source.id)} disabled={ani.state === 'checking' || ani.state === 'unavailable'} right={right}>
+        {source.name}
+      </Row>
+      {ani.state !== 'checking' && (
+        <div className="flex items-center justify-between gap-2 px-3 pb-1.5">
+          <div role="radiogroup" aria-label="ani.pm version" className="flex gap-1">
+            {ANI_LANGS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={ani.lang === o.id}
+                onClick={() => ani.onLang(o.id)}
+                className={`h-7 rounded-full px-3 text-[11px] font-semibold motion-safe:transition-colors ${ani.lang === o.id ? 'bg-white text-black' : 'bg-white/[0.07] text-white/70 hover:bg-white/15'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {ani.state !== 'unsure' && (
+            <button type="button" onClick={ani.onWrongShow} className="text-[11px] font-semibold text-white/60 underline-offset-2 hover:text-white hover:underline">Wrong show?</button>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
+
 // Netflix style settings sheet from the reference screenshot: Servers, Subtitles, Audio, Speed.
 // Each section says plainly which part our UI controls and which part lives inside the iframe.
 const SettingsMenu = ({
@@ -58,7 +107,7 @@ const SettingsMenu = ({
   custom, providers, providerId, onProvider,
   subTracks, subStatus, subUrl, onSubTrack, subPrefs, onSubPrefs, subOffset, onSubOffset, nativeSubs = false, ownPlayer = false,
   subRoomNote = null, isFrameX = true, audio = { list: [], status: 'idle' }, dubMode = false, roomAudio = null, onDub, onLeaveDub,
-  speed, onSpeed, position = 'bottom-24 right-3 sm:right-6', initialTab = 'servers',
+  speed, onSpeed, position = 'bottom-24 right-3 sm:right-6', initialTab = 'servers', style, aniPm = null,
 }) => {
   const reduce = useReducedMotion();
   const ref = useRef(null);
@@ -92,6 +141,7 @@ const SettingsMenu = ({
       initial={reduce ? false : { opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
+      style={style}
       className={`absolute ${position} z-40 w-[min(340px,calc(100vw-24px))] max-h-[min(460px,calc(100%-140px))] flex flex-col overflow-hidden rounded-panel border border-white/10 bg-[#111116]/95 shadow-[0_24px_60px_-12px_rgb(0_0_0/0.9)] backdrop-blur-xl font-body`}
     >
       <div role="tablist" aria-label="Settings sections" className="grid grid-cols-4 gap-1 border-b border-white/10 p-1.5">
@@ -129,7 +179,9 @@ const SettingsMenu = ({
             <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Sources · {sources.length}</p>
             <p className="px-3 pb-1 text-[11px] leading-4 text-white/40">Backups are never picked for you. They use their own player.</p>
             <div role="menu" aria-label="Video sources">
-              {sources.map((s) => (
+              {sources.map((s) => (s.anime ? (
+                aniPm && <AniPmSource key={s.id} source={s} active={sourceId === s.id} ani={aniPm} onSource={onSource} />
+              ) : (
                 <Row
                   key={s.id}
                   active={sourceId === s.id}
@@ -138,7 +190,7 @@ const SettingsMenu = ({
                 >
                   {s.name}
                 </Row>
-              ))}
+              )))}
             </div>
             <button
               type="button"
@@ -227,7 +279,20 @@ const SettingsMenu = ({
 
         {tab === 'audio' && (
           <div className="px-3 py-3 text-sm leading-6 text-white/60">
-            {!isFrameX && <p>This backup source has its own audio button inside the video, when it has more than one language.</p>}
+            {aniPm && sourceId === 'anipm' && (
+              <>
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">ani.pm version</p>
+                <div role="menu" aria-label="ani.pm version" className="-mx-3">
+                  {ANI_LANGS.map((o) => (
+                    <Row key={o.id} active={aniPm.lang === o.id} onClick={() => aniPm.onLang(o.id)} disabled={o.id === 'dub' && aniPm.availability && !aniPm.availability.dub}>
+                      {o.id === 'sub' ? 'Sub (Japanese audio)' : 'Dub (English audio)'}
+                    </Row>
+                  ))}
+                </div>
+                <p className="mt-2">It switches right where you are. The Sub | Dub switch in the bar does the same.</p>
+              </>
+            )}
+            {!isFrameX && sourceId !== 'anipm' && <p>This backup source has its own audio button inside the video, when it has more than one language.</p>}
             {isFrameX && audio.status === 'loading' && <p>Checking which languages this title has…</p>}
             {isFrameX && audio.status === 'error' && <p>Could not check the audio languages. Try again in a moment.</p>}
             {isFrameX && audio.status === 'ready' && audio.list.length < 2 && (

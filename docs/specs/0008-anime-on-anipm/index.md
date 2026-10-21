@@ -1,6 +1,6 @@
 # 0008 · Anime section on ani.pm
 
-**Status**: Assumed
+**Status**: Superseded by [0009](../0009-anime-tmdb-first-anipm-backup/index.md)
 **Date**: 2026-10-21
 **Authorized by**: joyshadman, during /develop
 

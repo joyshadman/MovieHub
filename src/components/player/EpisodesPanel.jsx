@@ -35,7 +35,7 @@ const NowPlaying = () => (
 // - memo + stable props from Watch keep it from re-rendering with playback updates.
 // - variant="inline" (phone layout) is a plain page section under the player: no backdrop, no close
 //   button, no focus move, and the list flows with the page instead of scrolling on its own.
-const EpisodesPanel = ({ tvId, title, seasons, playingSeason, playingEpisode, onPick, onClose, variant = 'panel' }) => {
+const EpisodesPanel = ({ tvId, title, seasons, playingSeason, playingEpisode, onPick, onClose, variant = 'panel', docked = false }) => {
   const inline = variant === 'inline';
   const reduce = useReducedMotion();
   const panelRef = useRef(null);
@@ -203,12 +203,15 @@ const EpisodesPanel = ({ tvId, title, seasons, playingSeason, playingEpisode, on
 
   return (
     <>
-      <Motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="absolute inset-0 z-40 bg-black/60"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      {/* Docked (ani.pm, spec 0009): the player sits beside the panel, so no dimmed layer over it */}
+      {!docked && (
+        <Motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="absolute inset-0 z-40 bg-black/60"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
       <Motion.aside
         ref={panelRef}
         tabIndex={-1}

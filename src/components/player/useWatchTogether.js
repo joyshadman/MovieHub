@@ -168,14 +168,16 @@ export const useWatchTogether = ({ roomId, user, player, season, episode, server
 
   // The room's server is followed as an event (when someone switches), not enforced every second,
   // so this device's own automatic fallback to another frameXTV provider never fights the room.
-  const serverKey = room?.server ? `${room.server.sourceId}|${room.server.providerId || ''}` : null;
+  // On ani.pm the AniList entry counts too (a "Wrong show?" pick), not its episode: an episode
+  // change arrives with season and episode and is followed as one.
+  const serverKey = room?.server ? `${room.server.sourceId}|${room.server.providerId || ''}|${room.server.anilistId || ''}` : null;
   const seenServer = useRef(undefined);
   useEffect(() => {
     if (!serverKey) return;
     if (seenServer.current === undefined) { seenServer.current = serverKey; return; }
     if (seenServer.current === serverKey) return;
     seenServer.current = serverKey;
-    const mine = `${server?.sourceId}|${server?.providerId || ''}`;
+    const mine = `${server?.sourceId}|${server?.providerId || ''}|${server?.anilistId || ''}`;
     if (syncing && mine !== serverKey) onServerRef.current?.(room.server, expectedTime());
   }, [serverKey]);
 

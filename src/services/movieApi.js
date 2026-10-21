@@ -62,6 +62,7 @@ const formatItem = (item, typeOverride = null) => {
 // hovers on the same card share one request).
 const trailerCache = new Map();
 const seasonCache = new Map();
+const basicsCache = new Map();
 
 export const movieApi = {
   // YouTube key of a title's trailer (teaser as fallback), or null.
@@ -388,6 +389,33 @@ export const movieApi = {
       return null;
     }
   },
+
+  // What anime matching needs about a title (spec 0009), one request cached for the session: its
+  // genres, names, first air or release year, and for a show its seasons (season 0 left out) with
+  // their episode counts.
+  getTitleBasics: (type, id) => {
+    const key = `${type}:${id}`;
+    if (!basicsCache.has(key)) {
+      const request = tmdbFetch(`${BASE_URL}/${type === 'tv' ? 'tv' : 'movie'}/${id}`, getOptions())
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`TMDB ${res.status}`))))
+        .then((d) => {
+          const seasons = (d.seasons || []).filter((s) => s.season_number > 0);
+          return {
+            genreIds: (d.genres || []).map((g) => g.id),
+            name: d.name || d.title || '',
+            originalName: d.original_name || d.original_title || '',
+            year: Number(String(d.first_air_date || d.release_date || '').slice(0, 4)) || null,
+            seasons,
+            seasonCounts: Object.fromEntries(seasons.map((s) => [s.season_number, s.episode_count || 0])),
+          };
+        })
+        .catch((err) => { basicsCache.delete(key); throw err; });
+      basicsCache.set(key, request);
+    }
+    return basicsCache.get(key);
+  },
+  // { [season]: episode_count } for a show, season 0 left out. The one source of TMDB season counts.
+  getSeasonCounts: (tvId) => movieApi.getTitleBasics('tv', tvId).then((b) => b.seasonCounts),
 
   // One TV season's episodes, cached per show and season (the player and its episode panel share it).
   getSeason: (tvId, season) => {

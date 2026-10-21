@@ -142,6 +142,17 @@ const MovieDetails = () => {
     return subscribeHistory(user.uid, setHistory);
   }, [user]);
 
+  // An /anime link (spec 0009, AC-11) may name an episode TMDB does not list yet; then only its
+  // season is used. The season's episode count says which.
+  const linkEpisodeParam = type === 'tv' ? new URLSearchParams(location.search).get('episode') : null;
+  const [linkCounts, setLinkCounts] = useState({ id: null, value: null });
+  useEffect(() => {
+    if (!linkEpisodeParam) return undefined;
+    let cancelled = false;
+    movieApi.getSeasonCounts(id).then((value) => { if (!cancelled) setLinkCounts({ id, value }); }, () => { /* unknown: keep the episode */ });
+    return () => { cancelled = true; };
+  }, [id, linkEpisodeParam]);
+
   const loadReviews = useCallback(async () => {
     setReviews(undefined);
     setReviews(await movieApi.getReviews(type, id));
@@ -213,6 +224,18 @@ const MovieDetails = () => {
   const canResume = !!resume && (resume.t > 0 || (type === 'tv' && (resume.season > 1 || resume.episode > 1)));
   const resumeLabel = resume ? [type === 'tv' ? `S${resume.season} · E${resume.episode}` : null, resume.t > 0 ? formatLeft(resume.leftSec) : null].filter(Boolean).join(' · ') : '';
   const openPlayer = (from) => { setPlayFrom(from); setShowPlayer(true); };
+  // An /anime card links here with ?season=&episode= (spec 0009, AC-11): Play opens there, unless
+  // this viewer's own resume point is at or past it (newer), which keeps the Resume button.
+  const linkParams = new URLSearchParams(location.search);
+  const linkSeason = type === 'tv' ? Number(linkParams.get('season')) || null : null;
+  const linkKnown = linkCounts.id === id ? linkCounts.value?.[linkSeason] : undefined;
+  const linkAsked = linkSeason ? Number(linkParams.get('episode')) || null : null;
+  const linkEpisode = linkAsked && (!Number.isFinite(linkKnown) || linkAsked <= linkKnown) ? linkAsked : null;
+  const linked = linkSeason ? { season: linkSeason, episode: linkEpisode || 1, t: 0 } : null;
+  const resumeWins = canResume && (!linked || resume.season > linked.season || (resume.season === linked.season && resume.episode >= linked.episode));
+  const playLabel = resumeWins
+    ? (type === 'tv' ? `Resume S${resume.season} E${resume.episode}` : 'Resume')
+    : linked ? (linkEpisode ? `Play S${linked.season} E${linked.episode}` : `Play Season ${linked.season}`) : 'Play';
   const visibleTabs = TABS.filter((t) => (t.id === 'trailers' ? movie.videos?.length : t.id === 'similar' ? movie.similar?.length : t.id === 'cast' ? cast.length : true));
 
   return (
@@ -293,12 +316,12 @@ const MovieDetails = () => {
             <Button
               variant="light"
               size="lg"
-              onClick={() => openPlayer(canResume ? resume : undefined)}
+              onClick={() => openPlayer(resumeWins ? resume : linked || undefined)}
               icon={<Play size={18} className="fill-black" aria-hidden="true" />}
               className="min-w-[132px]"
-              aria-label={canResume ? `Resume ${movie.title}, ${resumeLabel}` : `Play ${movie.title}`}
+              aria-label={resumeWins ? `Resume ${movie.title}, ${resumeLabel}` : `${playLabel}, ${movie.title}`}
             >
-              {canResume ? (type === 'tv' ? `Resume S${resume.season} E${resume.episode}` : 'Resume') : 'Play'}
+              {playLabel}
             </Button>
             {/* Phones get an icon only trailer button so all four controls fit on one row. */}
             <span className="contents sm:hidden">

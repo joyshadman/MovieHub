@@ -23,7 +23,7 @@ export const KnockToast = ({ guest, onLetIn, onDeny }) => (
 
 // Watch Together side sheet (spec 0005): share link, the host's lobby, who is here, chat, and the
 // member's controls.
-const TogetherPanel = ({ together, user, onClose, onLeave, onEnd, onSyncNow }) => {
+const TogetherPanel = ({ together, user, onClose, onLeave, onEnd, onSyncNow, style }) => {
   const reduce = useReducedMotion();
   const { room, isHost, hostAway, ended, members, pending, messages, send, control, changeControl, letIn, turnAway, remove } = together;
   const [text, setText] = useState('');
@@ -68,6 +68,7 @@ const TogetherPanel = ({ together, user, onClose, onLeave, onEnd, onSyncNow }) =
       exit={reduce ? { opacity: 0 } : { x: 40, opacity: 0 }}
       transition={{ duration: 0.2 }}
       aria-label="Watch together"
+      style={style}
       className="fixed inset-y-0 right-0 z-[520] flex w-[min(360px,100vw)] flex-col border-l border-white/10 bg-[#0d0d12]/95 font-body text-white shadow-card backdrop-blur-xl"
       onKeyDown={(e) => e.stopPropagation()}
     >

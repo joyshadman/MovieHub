@@ -43,6 +43,7 @@ Ground rules for every feature in this pass: no feature, route, auth flow or dat
 | 17 | Global style switch | Slice 4 | in-progress |
 | 18 | AI recommendation chat | Slice 5 | in-progress |
 | 19 | Watch Together | Slice 5 | in-progress |
+| 20 | Anime from TMDB with ani.pm backup | Slice 5 | in-progress |
 
 ## Already built (enrolled for context)
 
@@ -165,7 +166,7 @@ Collections for Best Bangla, Hollywood, Bollywood, Korean, Japanese and Anime, u
 - [x] Build it: `/develop regional and anime collections`
 - [ ] Verify it: `/check verify regional and anime collections`
 Spec [0002](../specs/0002-figma-restyle-assumptions.md) · code in `src/Pages/CollectionPage.jsx`, `src/utils/collections.js`
-Anime section on ani.pm (Latest, Top rated, Most watched, Schedule, search, title and episode pages) · assumed decision (spec [0008](../specs/0008-anime-on-anipm/index.md)) · code in `src/Pages/Anime.jsx`, `src/Pages/AnimeDetails.jsx`, `src/Pages/AnimeWatch.jsx`, `src/services/aniPm.js`, `src/services/anilist.js`
+Anime section on ani.pm (Latest, Top rated, Most watched, Schedule, search, title and episode pages) · now feature 20, spec [0009](../specs/0009-anime-tmdb-first-anipm-backup/index.md) (supersedes 0008) · code in `src/Pages/Anime.jsx`, `src/Pages/AnimeDetails.jsx`, `src/Pages/AnimeWatch.jsx`, `src/services/aniPm.js`, `src/services/anilist.js`
 
 ### 11. Top 10 by country row · in-progress · assumed decision (spec 0002)
 The big numbered Top 10 row from the Home frame, based on the visitor's country.
@@ -248,6 +249,18 @@ Signed in friends watch the same movie or episode in sync from a shared link, wi
 - [ ] Verify it: `/check verify watch together`
 Spec [0005](../specs/0005-watch-together/index.md) · code in `src/services/watchTogether.js`, `src/components/player/useWatchTogether.js`, `src/components/player/TogetherPanel.jsx`, `src/Pages/TogetherRoom.jsx`, `src/Pages/Watch.jsx` · from spec 0005
 Room subtitle sync (language, timing, style, following the control mode) · assumed decision (spec [0007](../specs/0007-room-subtitles-dubs-tour/index.md)), owes ratification and a Firestore rules update
+
+### 20. Anime from TMDB with ani.pm backup · in-progress · assumed decision (spec 0010)
+Anime opens the TMDB details page and plays on the MovieHub server first; ani.pm is a hand picked backup for anime only, matched to TMDB seasons and episodes, and works with Continue Watching and Watch Together. The `/anime` lists stay and open TMDB pages for matched titles.
+**Done when:** a matched anime episode plays on ani.pm from Settings or the no stream screen at the right season and episode, unsure titles let the viewer pick, ani.pm runs unmodified with the one time ad note, progress and rooms work on it, and nothing changes for non anime titles.
+- [x] Design it (spec): `/architect anime on ani.pm`
+- [ ] Build it: `/develop anime from TMDB with ani.pm backup`
+   - [ ] ID map and matching: rules check, map builder with fallback, season counts, map lookup and episode mapping (AC-3, AC-5, AC-9, AC-12)
+   - [x] ani.pm in the player: the source and layout, option states, split parts, search fallback and Find on ani.pm (AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-7, AC-13)
+   - [x] Player link, Sub or Dub, Continue Watching and Watch Together on ani.pm (AC-7, AC-8, AC-9, AC-10)
+   - [x] `/anime` cards open TMDB pages; recheck links and non anime titles (AC-1, AC-2, AC-11)
+- [ ] Verify it: `/check verify anime from TMDB with ani.pm backup`
+Spec [0009](../specs/0009-anime-tmdb-first-anipm-backup/index.md), amended by assumed spec [0010](../specs/0010-anime-section-tmdb-only.md) (TMDB matched titles only on `/anime`) · code in `src/services/animeMatch.js` (new), `scripts/build-anime-map.mjs` (new), `src/data/` (new), `src/services/aniPm.js`, `src/services/anilist.js`, `src/services/movieApi.js`, `src/config/streamSources.js`, `src/Pages/Watch.jsx`, `src/components/player/SettingsMenu.jsx`, `src/services/watchHistory.js`, `src/services/watchTogether.js`, `src/Pages/MovieDetails.jsx`, `src/Pages/Anime.jsx`, `src/components/AnimeCard.jsx`, `src/components/useAnimeLink.js` (new), `src/components/player/useAniPmPlayer.js` (new), `src/components/player/useAniPmOption.js` (new), `src/components/player/FindOnAniPm.jsx` (new), `src/Pages/AnimeRedirect.jsx` (new; the old ani.pm title and watch pages are removed) · from spec 0009
 
 ## Deferred
 Out of scope for the current build pass, kept so the plan stays honest.

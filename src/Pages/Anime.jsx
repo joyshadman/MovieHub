@@ -4,15 +4,18 @@ import { Helmet } from 'react-helmet';
 import { CalendarDays, ChevronRight, Clock, Flame, Search, Sparkles, Star, Tv } from 'lucide-react';
 import { aniPm, TOP_RANGES } from '../services/aniPm';
 import { topRatedAnime } from '../services/anilist';
+import { loadAnimeMap } from '../services/animeMatch';
 import AnimeCard from '../components/AnimeCard';
+import { useAnimeLink } from '../components/useAnimeLink';
 import Chip from '../components/ui/Chip';
 import Button from '../components/ui/Button';
 import { TextField } from '../components/ui/fields';
 import { EmptyState, ErrorState, SkeletonGrid } from '../components/ui/feedback';
 
-// Anime section (spec 0008), all on ani.pm: Latest episodes, Top rated (AniList ranking, playable
-// on ani.pm), Most watched, the weekly Schedule, and search. The tab, range and search live in the
-// URL so Back and shared links keep them.
+// Anime section (spec 0008): Latest episodes, Top rated (AniList ranking, playable on ani.pm), Most
+// watched, the weekly Schedule, and search, listed from ani.pm. Since spec 0010 it shows only titles
+// the ID map matches to TMDB, and each one opens our details page, player and Continue Watching.
+// The tab, range and search live in the URL so Back and shared links keep them.
 const TABS = [
   { id: 'latest', label: 'Latest', icon: Clock },
   { id: 'top', label: 'Top rated', icon: Star },
@@ -29,19 +32,33 @@ const ago = (iso) => {
   return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 };
 
+// Only titles with a TMDB match (spec 0010). A page left empty by the filter pulls the next ones
+// (up to EXTRA_PAGES) so a list never looks blank while more exists. No map, no list: an error.
+const EXTRA_PAGES = 3;
+const matchedOnly = async (load, page) => {
+  const map = await loadAnimeMap();
+  let p = page;
+  for (;;) {
+    const { items, hasMore } = await load(p);
+    const kept = items.filter((x) => map.byAnilist?.[x.anilistId]);
+    if (kept.length || !hasMore || p - page >= EXTRA_PAGES) return { items: kept, hasMore, page: p };
+    p += 1;
+  }
+};
+
 // One paged list. Page 1 loads whenever `key` changes; "Load more" appends the next page.
 const usePaged = (key, load) => {
   const [state, setState] = useState({ key: null, items: [], page: 0, hasMore: false, error: false, busy: false });
   const req = useRef(0);
   const run = useCallback((page) => {
     const id = ++req.current;
-    return load(page).then(
-      ({ items, hasMore }) => {
+    return matchedOnly(load, page).then(
+      ({ items, hasMore, page: last }) => {
         if (id !== req.current) return;
         setState((s) => {
           const all = page === 1 ? items : [...s.items, ...items];
           const seen = new Set();
-          return { key, page, hasMore, error: false, busy: false, items: all.filter((x) => { const k = `${x.anilistId}|${x.episode ?? ''}`; return !seen.has(k) && seen.add(k); }) };
+          return { key, page: last, hasMore, error: false, busy: false, items: all.filter((x) => { const k = `${x.anilistId}|${x.episode ?? ''}`; return !seen.has(k) && seen.add(k); }) };
         });
       },
       () => { if (id === req.current) setState((s) => ({ ...s, key, error: true, busy: false })); },
@@ -91,7 +108,7 @@ const LatestTab = () => {
       render={(a) => (
         <AnimeCard
           anime={a}
-          to={`/anime/${a.anilistId}/${a.episode}`}
+          episode={a.episode}
           badge={`EP ${a.episode}`}
           meta={[a.dub ? 'Sub • Dub' : 'Sub', ago(a.addedAt)].join(' • ')}
         />
@@ -134,6 +151,35 @@ const dayLabel = (key, todayKey) => {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 };
 const loadSchedule = () => aniPm.schedule().then((items) => ({ items, hasMore: false }));
+// One release: opens its TMDB page with the season selected (spec 0009 AC-11, spec 0010).
+const ScheduleRow = ({ x, aired }) => {
+  const href = useAnimeLink(x.anilistId, undefined, '/anime');
+  return (
+    <li className="flex items-center gap-3 px-3 py-3 sm:gap-4 sm:px-4">
+      <time dateTime={x.airingAt} className={`w-16 shrink-0 text-sm font-semibold tabular-nums ${aired ? 'text-muted' : 'text-white'}`}>
+        {x.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+      </time>
+      <Link to={href} className="h-16 w-11 shrink-0 overflow-hidden rounded-md bg-raised" tabIndex={-1} aria-hidden="true">
+        {x.poster && <img src={x.poster} alt="" loading="lazy" className="h-full w-full object-cover" />}
+      </Link>
+      <div className="min-w-0 flex-1">
+        <Link to={href} className="line-clamp-1 text-sm font-semibold hover:text-accent-text">{x.title}</Link>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+          <span>Episode {x.episode}</span>
+          <span className="uppercase">{x.kind}</span>
+          {x.final && <span className="text-rating">Final</span>}
+          {x.delayed && <span className="text-accent-text">Delayed</span>}
+        </p>
+      </div>
+      {x.onAniPm ? (
+        <Link to={href} className="shrink-0 rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-black hover:bg-white/90">Watch</Link>
+      ) : (
+        <span className="shrink-0 text-xs text-muted">{aired ? 'Coming soon' : 'Upcoming'}</span>
+      )}
+    </li>
+  );
+};
+
 const ScheduleTab = () => {
   const list = usePaged('schedule', loadSchedule);
   const todayKey = dayKey(new Date());
@@ -161,34 +207,7 @@ const ScheduleTab = () => {
       </div>
       <p className="mb-3 text-xs text-muted">Times are in your time zone.</p>
       <ol className="divide-y divide-line overflow-hidden rounded-panel border border-line bg-card">
-        {(byDay.get(day) || []).map((x) => {
-          const aired = x.at.getTime() <= now;
-          const watch = `/anime/${x.anilistId}/${x.episode}${x.kind === 'dub' ? '?lang=dub' : ''}`;
-          return (
-            <li key={`${x.anilistId}-${x.episode}-${x.kind}-${x.airingAt}`} className="flex items-center gap-3 px-3 py-3 sm:gap-4 sm:px-4">
-              <time dateTime={x.airingAt} className={`w-16 shrink-0 text-sm font-semibold tabular-nums ${aired ? 'text-muted' : 'text-white'}`}>
-                {x.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-              </time>
-              <Link to={`/anime/${x.anilistId}`} className="h-16 w-11 shrink-0 overflow-hidden rounded-md bg-raised" tabIndex={-1} aria-hidden="true">
-                {x.poster && <img src={x.poster} alt="" loading="lazy" className="h-full w-full object-cover" />}
-              </Link>
-              <div className="min-w-0 flex-1">
-                <Link to={`/anime/${x.anilistId}`} className="line-clamp-1 text-sm font-semibold hover:text-accent-text">{x.title}</Link>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
-                  <span>Episode {x.episode}</span>
-                  <span className="uppercase">{x.kind}</span>
-                  {x.final && <span className="text-rating">Final</span>}
-                  {x.delayed && <span className="text-accent-text">Delayed</span>}
-                </p>
-              </div>
-              {x.onAniPm ? (
-                <Link to={watch} className="shrink-0 rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-black hover:bg-white/90">Watch</Link>
-              ) : (
-                <span className="shrink-0 text-xs text-muted">{aired ? 'Coming soon' : 'Upcoming'}</span>
-              )}
-            </li>
-          );
-        })}
+        {(byDay.get(day) || []).map((x) => <ScheduleRow key={`${x.anilistId}-${x.episode}-${x.kind}-${x.airingAt}`} x={x} aired={x.at.getTime() <= now} />)}
       </ol>
     </>
   );

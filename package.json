@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "prebuild": "node scripts/build-anime-map.mjs",
     "build": "vite build",
+    "anime-map": "node scripts/build-anime-map.mjs --fallback",
     "lint": "eslint .",
     "preview": "vite preview --host"
   },

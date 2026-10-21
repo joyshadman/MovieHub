@@ -32,8 +32,7 @@ const NotFound = lazy(() => import('./Pages/NotFound'));
 const Admin = lazy(() => import('./Pages/Admin'));
 const TogetherRoom = lazy(() => import('./Pages/TogetherRoom'));
 const Anime = lazy(() => import('./Pages/Anime'));
-const AnimeDetails = lazy(() => import('./Pages/AnimeDetails'));
-const AnimeWatch = lazy(() => import('./Pages/AnimeWatch'));
+const AnimeRedirect = lazy(() => import('./Pages/AnimeRedirect'));
 
 const AUTH_PATHS = ['/login', '/signup', '/forgot-password'];
 
@@ -117,8 +116,8 @@ const AppContent = ({ user, authReady, site, isAppReady }) => {
         <Route path="/categories/:genreId" element={<CategoryPage />} />
         <Route path="/collection/:slug" element={<CollectionPage />} />
         <Route path="/anime" element={<Anime />} />
-        <Route path="/anime/:id" element={<AnimeDetails />} />
-        <Route path="/anime/:id/:episode" element={<AnimeWatch />} />
+        <Route path="/anime/:id" element={<AnimeRedirect />} />
+        <Route path="/anime/:id/:episode" element={<AnimeRedirect />} />
         <Route path="/about" element={<About user={user} />} />
         <Route path="/admin" element={<Admin user={user} site={site} />} />
         <Route path="/together/:roomId" element={<TogetherRoom user={user} />} />
