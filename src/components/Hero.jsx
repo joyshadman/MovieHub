@@ -24,6 +24,8 @@ const fallbackGenres = [
 ];
 
 const SLIDE_MS = 8000;
+// A floor, not a fixed height: on small or short screens the section grows to fit its copy instead of clipping it.
+const HEIGHT = 'min-h-[min(max(560px,82svh),900px)]';
 // Copy rises one line at a time on every slide.
 const LIST = { hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.15 } }, exit: {} };
 const ITEM = {
@@ -83,9 +85,9 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
 
   if (pending || loading || !current) {
     return (
-      <div className="relative h-[78svh] min-h-[520px] w-full bg-canvas" aria-busy="true">
+      <div className={`relative flex ${HEIGHT} w-full bg-canvas`} aria-busy="true">
         <div className="absolute inset-0 bg-gradient-to-r from-surface to-canvas motion-safe:animate-pulse" />
-        <div className="relative h-full flex flex-col justify-end gap-4 px-4 md:px-8 lg:px-16 pb-16">
+        <div className="relative flex-1 flex flex-col justify-end gap-4 px-4 md:px-8 lg:px-16 pb-20">
           <div className="h-6 w-40 rounded-full bg-raised" />
           <div className="h-20 w-2/3 max-w-xl rounded-panel bg-raised" />
           <div className="h-4 w-1/2 max-w-md rounded-full bg-raised" />
@@ -100,7 +102,7 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
   const fade = { duration: reducedMotion ? 0 : 0.4 };
 
   return (
-    <section aria-roledescription="carousel" aria-label="Featured titles" className="relative h-[82svh] min-h-[560px] max-h-[900px] w-full overflow-hidden bg-canvas">
+    <section aria-roledescription="carousel" aria-label="Featured titles" className={`relative flex ${HEIGHT} w-full overflow-hidden bg-canvas`}>
       <AnimatePresence mode="wait">
         <Motion.div key={current.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} className="absolute inset-0">
           {current.backdrop ? (
@@ -108,12 +110,13 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
           ) : (
             <div className="absolute inset-0" style={{ backgroundImage: fallbackGradient(current.id) }} />
           )}
-          <div className="absolute inset-0 bg-gradient-to-r from-canvas via-canvas/75 to-canvas/10" />
-          <div className="absolute inset-0 bg-gradient-to-t from-canvas via-transparent to-black/40" />
+          {/* Phones stack the copy at the bottom, so they shade bottom up and keep the art visible; wider screens shade from the left. */}
+          <div className="absolute inset-0 hidden md:block bg-gradient-to-r from-canvas via-canvas/75 to-canvas/10" />
+          <div className="absolute inset-0 bg-gradient-to-t from-canvas via-canvas/70 to-black/40 md:via-transparent" />
         </Motion.div>
       </AnimatePresence>
 
-      <div className="relative z-10 h-full flex items-end md:items-center px-4 md:px-8 lg:px-16 pb-16 md:pb-0 pt-24">
+      <div className="relative z-10 flex-1 flex items-end md:items-center px-4 md:px-8 lg:px-16 pt-24 pb-20 md:pb-28">
         <AnimatePresence mode="wait">
           <Motion.div
             key={current.id}
@@ -121,17 +124,17 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
             initial={reducedMotion ? false : 'hidden'}
             animate="show"
             exit={reducedMotion ? undefined : 'exit'}
-            className="max-w-xl"
+            className="w-full max-w-xl"
             aria-live="polite"
           >
-            <Motion.div variants={ITEM} className="inline-flex items-center gap-2 rounded-full glass pl-1 pr-3 py-1 mb-5">
-              <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] text-white">Top 10</span>
-              <span className="text-xs font-medium text-white">#{index + 1} in {activeCategory} Today</span>
+            <Motion.div variants={ITEM} className="inline-flex max-w-full items-center gap-2 rounded-full glass pl-1 pr-3 py-1 mb-4 md:mb-5">
+              <span className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] text-white">Top 10</span>
+              <span className="truncate text-xs font-medium text-white">#{index + 1} in {activeCategory} Today</span>
             </Motion.div>
 
-            <Motion.h1 variants={ITEM} className="font-display text-display-xl text-white uppercase line-clamp-3 break-words">{current.title}</Motion.h1>
+            <Motion.h1 variants={ITEM} className="font-display text-[2.75rem] leading-[0.95] sm:text-display-xl text-white uppercase line-clamp-2 sm:line-clamp-3 break-words">{current.title}</Motion.h1>
 
-            <Motion.div variants={ITEM} className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted">
+            <Motion.div variants={ITEM} className="mt-4 md:mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted">
               {current.year && <span>{current.year}</span>}
               {rating > 0 && (
                 <>
@@ -154,13 +157,14 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
               </Motion.ul>
             )}
 
-            <Motion.p variants={ITEM} className="mt-5 text-sm md:text-base text-muted line-clamp-3 max-w-lg">{current.overview}</Motion.p>
+            <Motion.p variants={ITEM} className="mt-4 md:mt-5 text-sm md:text-base text-muted line-clamp-2 sm:line-clamp-3 max-w-lg">{current.overview}</Motion.p>
 
-            <Motion.div variants={ITEM} className="mt-7 flex flex-wrap items-center gap-3" data-tour="hero">
-              <Button variant="light" size="lg" onClick={() => onPlay?.(current)} icon={<Play size={18} className="fill-black" aria-hidden="true" />}>
+            {/* md sized on phones so all three fit one row; the sm: classes restore the lg size. */}
+            <Motion.div variants={ITEM} className="mt-6 md:mt-7 flex flex-wrap items-center gap-2 sm:gap-3" data-tour="hero">
+              <Button variant="light" size="md" className="sm:h-12 sm:px-7 sm:text-base sm:gap-2.5" onClick={() => onPlay?.(current)} icon={<Play size={18} className="fill-black" aria-hidden="true" />}>
                 Play
               </Button>
-              <Button variant="glass" size="lg" onClick={() => onInfo?.(current)} icon={<Info size={18} aria-hidden="true" />}>
+              <Button variant="glass" size="md" className="sm:h-12 sm:px-7 sm:text-base sm:gap-2.5" onClick={() => onInfo?.(current)} icon={<Info size={18} aria-hidden="true" />}>
                 More Info
               </Button>
               {watchlist && (
@@ -168,7 +172,8 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
                   label={saved ? `Remove ${current.title} from My List` : `Add ${current.title} to My List`}
                   aria-pressed={!!saved}
                   active={saved}
-                  size="lg"
+                  size="md"
+                  className="sm:h-14 sm:w-14"
                   disabled={watchlist.isPending(current.id)}
                   onClick={() => watchlist.toggle(current)}
                 >
@@ -181,7 +186,7 @@ const Hero = ({ movies = [], onPlay, onInfo, label = 'Trending', pending = false
       </div>
 
       {slides.length > 1 && (
-        <div className="absolute bottom-12 md:bottom-20 right-4 md:right-8 lg:right-16 z-20 flex gap-1.5" role="group" aria-label="Choose featured title">
+        <div className="absolute bottom-8 md:bottom-14 left-4 md:left-auto md:right-8 lg:right-16 z-20 flex gap-1.5" role="group" aria-label="Choose featured title">
           {slides.map((s, i) => (
             <button
               key={s.id}
