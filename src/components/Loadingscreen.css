@@ -1,6 +1,15 @@
 /* ============================================================
-   MovieHub — Cinematic High-Performance Loading Screen
-   Optimized for buttery smooth 60fps across all devices.
+   MovieHub — Netflix style logo swoop (reference: context/Netflix Logo Swoop.lottie).
+   The reference runs 4.6 s; this is the same motion fitted to src/assets/startup-sound.mp3
+   (2.806 s, App.jsx's 2.8 s window). Each step starts on a beat of the sound, measured from
+   its loudness: hits at 0.05, 0.35, 0.5 and 1.0 s, a climax from 1.45 to 2.25 s, then decay.
+     0.05s to 0.95s  the big ribbon M builds, one stroke per hit, centered on screen
+     1.00s to 1.45s  the M shrinks to wordmark size (on the 1.0 s hit)
+     1.45s to 1.98s  the logo slides left while "OVIEHUB" sweeps open (rising into the climax)
+     1.98s to 2.50s  a light sheen runs across the wordmark (the held peak)
+     2.50s to 2.78s  everything fades out (the decay)
+   --mh-dx (set by LoadingScreen.jsx) is how far right the M sits when it is centered on screen.
+   Only transform, opacity, clip-path and background-position animate.
    ============================================================ */
 
 .mh-loader-container {
@@ -11,9 +20,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   opacity: 1;
   visibility: visible;
-  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1), 
+  --mh-h: clamp(52px, 9vw, 104px);
+  --mh-dx: 0px;
+  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1),
               visibility 0.8s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
@@ -23,129 +35,140 @@
   pointer-events: none;
 }
 
-.loader-wrapper {
-  position: relative;
+/* The whole wordmark: ribbon M plus the typed letters. Starts shifted so the M is centered. */
+.mh-logo {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 160px;
-  width: auto;
-  
-  /* Responsive typography scales beautifully without pixelation */
-  font-family: "Poppins", sans-serif;
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  align-items: flex-start;
+  transform: translate3d(var(--mh-dx), 0, 0);
   user-select: none;
-  color: #fff;
-  
-  /* Core layout performance optimizations */
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
-  perspective: 1000px;
 }
-
-.loader {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background-color: transparent;
-  pointer-events: none;
-  mask: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent 6px,
-    black 7px,
-    black 8px
-  );
-}
-
-.loader::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  
-  background-image: 
-    radial-gradient(circle at 50% 50%, #ff0 0%, transparent 50%),
-    radial-gradient(circle at 45% 45%, #f00 0%, transparent 45%),
-    radial-gradient(circle at 55% 55%, #0ff 0%, transparent 45%),
-    radial-gradient(circle at 45% 55%, #0f0 0%, transparent 45%),
-    radial-gradient(circle at 55% 44%, #00f 0%, transparent 45%);
-  
-  mask: radial-gradient(
-    circle at 50% 50%,
-    transparent 0%,
-    transparent 10%,
-    black 25%
-  );
-
-  /* Elongated cinematic duration cycles */
+.mh-loader-container.is-animating .mh-logo {
   animation:
-    transform-animation 3.5s infinite alternate,
-    opacity-animation 7s infinite;
-  animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
-  
-  will-change: transform, opacity;
+    mh-slide 0.5s cubic-bezier(0.455, 0, 0.3, 1) 1.45s both,
+    mh-out 0.28s ease-in 2.5s forwards;
 }
 
-@keyframes transform-animation {
-  0% { transform: translate3d(-60%, 0, 0); }
-  100% { transform: translate3d(60%, 0, 0); }
+/* --- The ribbon M (box 64 wide by 100 tall, strokes in percentages of it) --- */
+.mh-mark {
+  position: relative;
+  flex: none;
+  height: var(--mh-h);
+  aspect-ratio: 64 / 100;
+  transform: scale(3.1);
+}
+.mh-loader-container.is-animating .mh-mark {
+  animation: mh-shrink 0.45s cubic-bezier(0.46, 0, 0.33, 1) 1s both;
 }
 
-@keyframes opacity-animation {
-  0%, 100% { opacity: 0; }
-  15% { opacity: 1; }
-  60% { opacity: 0; }
+.mh-stroke {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.mh-stroke > i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform: scaleY(0);
 }
 
-.loader-letter {
-  display: inline-block;
-  opacity: 0;
-  animation: loader-letter-anim 7s infinite linear;
-  z-index: 2;
-  will-change: transform, opacity;
+/* Legs: the darker back ribbon. Left grows up, right drops down. */
+.mh-leg-l { clip-path: polygon(0% 0%, 24% 0%, 24% 100%, 0% 100%); }
+.mh-leg-r { clip-path: polygon(76% 0%, 100% 0%, 100% 100%, 76% 100%); }
+.mh-leg-l > i,
+.mh-leg-r > i {
+  background: linear-gradient(180deg, #9a060e 0%, #b1060f 45%, #86050c 100%);
+}
+.mh-leg-l > i { transform-origin: 50% 100%; }
+.mh-leg-r > i { transform-origin: 50% 0%; }
+
+/* Diagonals: the bright front ribbon, meeting in a V. */
+.mh-diag-l { clip-path: polygon(0% 0%, 24% 0%, 60% 64%, 50% 82%); z-index: 1; }
+.mh-diag-r { clip-path: polygon(100% 0%, 76% 0%, 40% 64%, 50% 82%); z-index: 1; }
+.mh-diag-l > i,
+.mh-diag-r > i {
+  background: linear-gradient(180deg, #f0141f 0%, #e50914 60%, #cc0812 100%);
+}
+.mh-diag-l > i { transform-origin: 50% 0%; }
+.mh-diag-r > i { transform-origin: 50% 100%; }
+
+.mh-loader-container.is-animating .mh-leg-l > i  { animation: mh-fold 0.25s cubic-bezier(0.3, 0.9, 0.3, 1) 0.05s forwards; }
+.mh-loader-container.is-animating .mh-diag-l > i { animation: mh-fold 0.25s cubic-bezier(0.3, 0.9, 0.3, 1) 0.35s forwards; }
+.mh-loader-container.is-animating .mh-diag-r > i { animation: mh-fold 0.25s cubic-bezier(0.3, 0.9, 0.3, 1) 0.5s forwards; }
+.mh-loader-container.is-animating .mh-leg-r > i  { animation: mh-fold 0.25s cubic-bezier(0.3, 0.9, 0.3, 1) 0.7s forwards; }
+
+/* --- The typed letters, wiped open from the M's edge --- */
+.mh-rest {
+  display: flex;
+  align-items: flex-start;
+  margin-left: calc(var(--mh-h) * 0.05);
+  clip-path: inset(-10% 100% -10% 0);
+}
+.mh-loader-container.is-animating .mh-rest {
+  animation: mh-wipe 0.5s cubic-bezier(0.455, 0, 0.3, 1) 1.48s both;
 }
 
-/* Staggered text reveal synced to extended timeline */
-.loader-letter:nth-child(1) { animation-delay: 0.15s; }
-.loader-letter:nth-child(2) { animation-delay: 0.35s; }
-.loader-letter:nth-child(3) { animation-delay: 0.55s; }
-.loader-letter:nth-child(4) { animation-delay: 0.75s; }
-.loader-letter:nth-child(5) { animation-delay: 0.95s; }
-.loader-letter:nth-child(6) { animation-delay: 1.15s; }
-.loader-letter:nth-child(7) { animation-delay: 1.35s; }
-.loader-letter:nth-child(8) { animation-delay: 1.55s; }
-
-@keyframes loader-letter-anim {
-  0% { 
-    opacity: 0; 
-    transform: scale3d(0.95, 0.95, 1) translate3d(0, 0, 0);
-  }
-  4% {
-    opacity: 1;
-    text-shadow: 0 0 8px rgba(255, 255, 255, 0.8), 0 0 20px rgba(255, 255, 255, 0.4);
-    transform: scale3d(1.08, 1.08, 1) translate3d(0, -6px, 0);
-  }
-  18% {
-    opacity: 0.25;
-    transform: scale3d(1, 1, 1) translate3d(0, 0, 0);
-  }
-  55%, 100% {
-    opacity: 0;
-  }
+/* Bebas Neue caps are about 0.675em tall; line-height trims the box to the caps so tops line up
+   with the M. --s (set per letter) shortens letters toward the middle: Netflix's arched bottom. */
+.mh-letter {
+  display: block;
+  font-family: "Bebas Neue", "Arial Narrow", sans-serif;
+  font-size: calc(var(--mh-h) / 0.675);
+  line-height: 0.675;
+  height: var(--mh-h);
+  padding-top: calc(var(--mh-h) * 0.012);
+  margin-left: calc(var(--mh-h) * 0.035);
+  letter-spacing: 0;
+  color: #e50914;
+  background: linear-gradient(100deg, #e50914 0 42%, #ff6a72 50%, #e50914 58% 100%) 100% 0 / 300% 100% no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  transform: scaleY(var(--s, 1));
+  transform-origin: 50% 0%;
+}
+.mh-loader-container.is-animating .mh-letter {
+  /* --d (set per letter) staggers the sheen so it reads as one light sweeping left to right. */
+  animation: mh-sheen 0.28s linear calc(1.98s + var(--d, 0s)) both;
 }
 
-/* Prefers reduced motion compliance overrides */
+@keyframes mh-fold {
+  0%   { transform: scaleY(0); }
+  100% { transform: scaleY(1); }
+}
+@keyframes mh-shrink {
+  0%   { transform: scale(3.1); }
+  100% { transform: scale(1); }
+}
+@keyframes mh-slide {
+  0%   { transform: translate3d(var(--mh-dx), 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+@keyframes mh-wipe {
+  0%   { clip-path: inset(-10% 100% -10% 0); }
+  100% { clip-path: inset(-10% 0% -10% 0); }
+}
+@keyframes mh-sheen {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0% 0; }
+}
+@keyframes mh-out {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Reduced motion: the finished logo, still. */
 @media (prefers-reduced-motion: reduce) {
-  .loader::after,
-  .loader-letter {
+  .mh-loader-container .mh-logo,
+  .mh-loader-container .mh-mark,
+  .mh-loader-container .mh-rest,
+  .mh-loader-container .mh-stroke > i,
+  .mh-loader-container .mh-letter {
     animation: none !important;
   }
-  .loader-letter {
-    opacity: 1;
-  }
-  .loader {
-    display: none;
-  }
+  .mh-logo,
+  .mh-mark,
+  .mh-stroke > i { transform: none; }
+  .mh-letter { transform: scaleY(var(--s, 1)); }
+  .mh-rest { clip-path: none; }
 }

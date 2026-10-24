@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import startupSound from "../assets/startup-sound.mp3";
 import "./Loadingscreen.css";
 
 const STARTUP_SOUND_VOLUME = 0.4;
+// How much shorter the middle letters are than the ends (Netflix's arched wordmark).
+const ARCH = 0.13;
 
 export default function Loadingscreen({
   minDuration = 3400,
@@ -17,6 +19,22 @@ export default function Loadingscreen({
   const soundTriedRef = useRef(false);
   const soundStateRef = useRef("idle");
   const audioRef = useRef(null);
+  const logoRef = useRef(null);
+  const markRef = useRef(null);
+
+  // The swoop starts with the M centered on screen: measure how far right of its resting place
+  // that is (half the wordmark minus half the M). Again once Bebas Neue has loaded, since the
+  // fallback font is a different width.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const logo = logoRef.current;
+      const mark = markRef.current;
+      if (!logo || !mark || !overlayRef.current) return;
+      overlayRef.current.style.setProperty("--mh-dx", `${(logo.offsetWidth - mark.offsetWidth) / 2}px`);
+    };
+    measure();
+    document.fonts?.ready.then(measure);
+  }, []);
 
   const triggerFade = useCallback(() => {
     if (firedRef.current) return;
@@ -92,16 +110,31 @@ export default function Loadingscreen({
   return (
     <div
       ref={overlayRef}
-      className={`mh-loader-container ${phase === "fading" ? "mh-fade-out" : ""}`}
+      className={`mh-loader-container ${phase === "animating" || phase === "fading" ? "is-animating" : ""} ${phase === "fading" ? "mh-fade-out" : ""}`}
       onTransitionEnd={handleTransitionEnd}
+      role="img"
+      aria-label={logoText}
     >
-      <div className="loader-wrapper">
-        {logoText.split("").map((letter, idx) => (
-          <span key={idx} className="loader-letter">
-            {letter}
-          </span>
-        ))}
-        <div className="loader"></div>
+      {/* Ribbon M leading the wordmark (see Loadingscreen.css for the timeline). */}
+      <div ref={logoRef} className="mh-logo" aria-hidden="true">
+        <div ref={markRef} className="mh-mark">
+          <span className="mh-stroke mh-leg-l"><i /></span>
+          <span className="mh-stroke mh-leg-r"><i /></span>
+          <span className="mh-stroke mh-diag-l"><i /></span>
+          <span className="mh-stroke mh-diag-r"><i /></span>
+        </div>
+        <div className="mh-rest">
+          {logoText.slice(1).toUpperCase().split("").map((letter, idx, rest) => {
+            // Position along the whole word, M included: 0 at the M, 1 at the last letter.
+            const x = (idx + 1) / rest.length;
+            const s = 1 - ARCH * (1 - (2 * x - 1) ** 2);
+            return (
+              <span key={idx} className="mh-letter" style={{ "--s": s.toFixed(3), "--d": `${idx * 0.04}s` }}>
+                {letter}
+              </span>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
