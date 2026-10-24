@@ -168,7 +168,7 @@ const SettingsMenu = ({
                 <div role="menu" aria-label="MovieHub servers">
                   {/* In the set order (frameX.js); frameXTV's own auto pick last, as the rotation tries it */}
                   {providers.map((p) => (
-                    <Row key={p.id} active={providerId === p.id} onClick={() => onProvider(p.id)} right={p.tagline ? <Tag>{/4k/i.test(p.tagline) ? '4K' : 'HD'}</Tag> : null}>
+                    <Row key={p.id} active={providerId === p.id} onClick={() => onProvider(p.id)} right={p.status === 'down' ? <Tag tone="bad">Down</Tag> : p.tagline ? <Tag>{/4k/i.test(p.tagline) ? '4K' : 'HD'}</Tag> : null}>
                       {p.name}
                     </Row>
                   ))}
@@ -208,18 +208,23 @@ const SettingsMenu = ({
         )}
 
         {tab === 'subtitles' && (
-          custom ? (
+          custom || ownPlayer ? (
             <>
               {subRoomNote && <p className="mx-1.5 mt-1.5 rounded-lg bg-accent/10 px-3 py-2 text-[11px] leading-4 text-white/70">{subRoomNote}</p>}
-              <div role="tablist" aria-label="Subtitle settings" className="grid grid-cols-2 gap-1 p-1.5">
-                {[['language', 'Language'], ['style', 'Style & timing']].map(([id, label]) => (
-                  <button key={id} type="button" role="tab" aria-selected={subView === id} onClick={() => setSubView(id)} className={`rounded-full py-1.5 text-xs font-semibold motion-safe:transition-colors ${subView === id ? 'bg-accent text-white' : 'bg-white/[0.06] text-white/60 hover:text-white'}`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {custom ? (
+                <div role="tablist" aria-label="Subtitle settings" className="grid grid-cols-2 gap-1 p-1.5">
+                  {[['language', 'Language'], ['style', 'Style & timing']].map(([id, label]) => (
+                    <button key={id} type="button" role="tab" aria-selected={subView === id} onClick={() => setSubView(id)} className={`rounded-full py-1.5 text-xs font-semibold motion-safe:transition-colors ${subView === id ? 'bg-accent text-white' : 'bg-white/[0.06] text-white/60 hover:text-white'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                // frameXTV's own player: we can pick its language, but size, color and timing live in its subtitle button.
+                <p className="px-3 pt-2 pb-1 text-[11px] leading-4 text-white/40">The language is sent to the video. Change size and timing from the subtitle button inside the video.</p>
+              )}
 
-              {subView === 'language' && (
+              {(subView === 'language' || !custom) && (
                 <div role="menu" aria-label="Subtitle language">
                   <Row active={!subUrl} onClick={() => onSubTrack(null)}>Off</Row>
                   {subStatus === 'loading' && <p className="px-3 py-3 text-sm text-white/50">Finding subtitles…</p>}
@@ -233,14 +238,14 @@ const SettingsMenu = ({
                 </div>
               )}
 
-              {subView === 'style' && nativeSubs && (
+              {custom && subView === 'style' && nativeSubs && (
                 <p className="px-3 py-4 text-sm leading-6 text-white/60">
                   On iPhone the subtitles come from the video itself, so they also show in full screen. Change their look in
                   Settings, Accessibility, Subtitles &amp; Captioning. In full screen, the CC button lists every language.
                 </p>
               )}
 
-              {subView === 'style' && !nativeSubs && (
+              {custom && subView === 'style' && !nativeSubs && (
                 <div>
                   <div className="@container relative mx-1.5 mt-1 flex h-24 items-end justify-center overflow-hidden rounded-xl bg-[linear-gradient(135deg,#3b2a1f,#14202b)] pb-3" aria-hidden="true">
                     <SubtitleText text={'This is how your\nsubtitles will look.'} prefs={subPrefs} />
@@ -273,7 +278,7 @@ const SettingsMenu = ({
               )}
             </>
           ) : (
-            <p className="px-3 py-4 text-sm leading-6 text-white/60">{ownPlayer ? 'Use the subtitle button inside the video.' : 'This backup source has its own subtitle button inside the video.'}</p>
+            <p className="px-3 py-4 text-sm leading-6 text-white/60">This backup source has its own subtitle button inside the video.</p>
           )
         )}
 

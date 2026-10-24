@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion as Motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Search, LogOut, ChevronDown, Bookmark, Home, LayoutGrid, User, LogIn, Film, Tv, Info, ShieldCheck } from 'lucide-react';
+import { Search, LogOut, ChevronDown, Bookmark, Home, LayoutGrid, User, LogIn, Film, Tv, Sparkles, Info, ShieldCheck } from 'lucide-react';
 import { useWatchlist } from '../context/WatchlistContext';
 import { signOutUser } from '../services/authService';
 import { isOwner } from '../config/owner';
@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { name: 'Home', path: '/', end: true },
   { name: 'Movies', path: '/movies' },
   { name: 'TV Shows', path: '/tv', end: true },
+  { name: 'Anime', path: '/anime' },
   { name: 'Categories', path: '/categories' },
   { name: 'My List', path: '/mylist' },
   { name: 'About', path: '/about' },
@@ -204,6 +205,7 @@ const Navbar = ({ user }) => {
           {[
             { to: '/movies', label: 'Movies', icon: <Film size={18} aria-hidden="true" /> },
             { to: '/tv', label: 'TV Shows', icon: <Tv size={18} aria-hidden="true" /> },
+            { to: '/anime', label: 'Anime', icon: <Sparkles size={18} aria-hidden="true" /> },
             { to: '/mylist', label: `My List${libraryCount ? ` (${libraryCount})` : ''}`, icon: <Bookmark size={18} aria-hidden="true" /> },
             { to: '/about', label: 'About', icon: <Info size={18} aria-hidden="true" /> },
             owner && { to: '/admin', label: 'Admin', icon: <ShieldCheck size={18} aria-hidden="true" /> },

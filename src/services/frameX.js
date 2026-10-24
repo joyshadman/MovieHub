@@ -67,14 +67,17 @@ export const sendFrameX = (frameWindow, action, payload = {}) => {
 // Server order (spec 0007, 2d), set by the engineer: these first, in this order, then every other
 // server in frameXTV's order, then Giant (the dub server) last. Settings lists them this way and
 // the automatic rotation tries them this way ("Best available" after all of them).
-export const FIRST_PROVIDER = 'miner';
-const LEAD_PROVIDERS = [FIRST_PROVIDER, 'headhunter', 'titan', 'hog_rider', 'valkyrie'];
+// Reordered 2026-10-24: Miner and Valkyrie went `unavailable` and Headhunter, Hog Rider and Lava
+// Hound `down`, so the old order opened on dead servers. These answered with streams for both
+// movies and TV that day. A server frameXTV reports `down` still shows, but after every healthy one.
+export const FIRST_PROVIDER = 'titan';
+const LEAD_PROVIDERS = [FIRST_PROVIDER, 'archer_queen', 'super_dragon', 'super_barbarian', 'bowler', 'balloon'];
 const LAST_PROVIDERS = ['giant'];
-const providerRank = (id) => {
+const providerRank = ({ id, status }) => {
   const lead = LEAD_PROVIDERS.indexOf(id);
-  if (lead >= 0) return lead;
   const last = LAST_PROVIDERS.indexOf(id);
-  return last >= 0 ? 1000 + last : 500;
+  const rank = lead >= 0 ? lead : last >= 0 ? 1000 + last : 500;
+  return status === 'down' ? 2000 + rank : rank;
 };
 
 let providersRequest = null;
@@ -84,9 +87,9 @@ export const fetchFrameXProviders = () => {
       .then((r) => (r.ok ? r.json() : { providers: [] }))
       .then((d) => (d.providers || [])
         .filter((p) => p?.id && p.category !== 'anime' && p.status !== 'unavailable')
-        .map((p) => ({ id: p.id, name: p.name || p.id, tagline: p.tagline || '' }))
+        .map((p) => ({ id: p.id, name: p.name || p.id, tagline: p.tagline || '', status: p.status || 'available' }))
         // Array sort is stable, so servers of equal rank keep frameXTV's order.
-        .sort((a, b) => providerRank(a.id) - providerRank(b.id)))
+        .sort((a, b) => providerRank(a) - providerRank(b)))
       .catch(() => { providersRequest = null; return []; });
   }
   return providersRequest;
@@ -94,9 +97,9 @@ export const fetchFrameXProviders = () => {
 
 // Servers with nothing for this title (spec 0007, 2d). Asked in the background while the player
 // opens on the first server, so the rotation can skip them instead of waiting 12 to 15 s on each.
-// Only servers frameXTV resolves on its API can be asked; Miner and Super Barbarian are fetched
-// inside the frame itself. A server that fails or is slow counts as unknown, never as empty.
-const API_CHECKED = ['headhunter', 'titan', 'hog_rider', 'valkyrie', 'lavahound', 'bowler', 'giant'];
+// Only servers frameXTV resolves on its API can be asked; Miner is fetched inside the frame itself.
+// A server that fails or is slow counts as unknown, never as empty.
+const API_CHECKED = ['titan', 'archer_queen', 'super_dragon', 'super_barbarian', 'bowler', 'balloon', 'headhunter', 'hog_rider', 'valkyrie', 'lavahound', 'giant'];
 const CHECK_TIMEOUT_MS = 20000;
 const streamQuery = ({ id, isTV, season, episode }, provider) => {
   const q = new URLSearchParams({ type: isTV ? 'tv' : 'movie', id: String(id), provider });

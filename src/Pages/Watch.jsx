@@ -257,6 +257,7 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   // Desktop also uses it while picking an audio dub (dubMode).
   const ownControls = touch || dubMode || isAniPm;
   const custom = isFrameX && !ownControls;
+  const ownFrameX = isFrameX && ownControls;
   // ani.pm reloads only when its entry or episode changes (Sub or Dub switches in place).
   const loadKey = isAniPm
     ? `anipm|${aniLoaded?.anilistId || ''}|${aniLoaded?.aniEpisode || ''}|${reloadKey}`
@@ -323,7 +324,12 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
 
   useEffect(() => {
     let cancelled = false;
-    fetchFrameXProviders().then((list) => { if (!cancelled) setProviders(list); });
+    fetchFrameXProviders().then((list) => {
+      if (cancelled) return;
+      setProviders(list);
+      // The set first server is gone from frameXTV's list: open on the first one it does list.
+      if (autoServerRef.current && list.length) setProviderId((id) => (id === FIRST_PROVIDER && !list.some((p) => p.id === id) ? list[0].id : id));
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -830,7 +836,8 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
   const chooseSubTrack = (url) => {
     // iPhone: the subtitles are frameXTV's own text track (sent below), because Apple's full screen
     // player only shows tracks of the video itself. It has no working "off", so off reloads here.
-    if (nativeSubs && !url && subUrl) latest.current.reload();
+    // frameXTV's own player (phones, dub mode) has no "off" command either, so it reloads too.
+    if ((nativeSubs || ownFrameX) && !url && subUrl) latest.current.reload();
     subsWanted.current = !!url;
     setSubUrl(url);
     setSubOffset(0);
@@ -870,9 +877,10 @@ const WatchPage = ({ movie, user, onClose, resume, roomId: joinRoomId = null, se
     const list = subTracks.list;
     setSubUrl((list.find((t) => t.url === subs.url) || (list.length ? pickTrack(list, subs.lang) : null))?.url || subs.url);
   };
-  // Phones (and desktop picking a dub) run frameXTV's own player: hand it the room's language by
-  // its index in frameXTV's list, after every load. Timing and look are out of reach there.
-  const ownSubIndex = isFrameX && !custom && inRoom ? subTracks.list.find((t) => t.url === subUrl)?.index : undefined;
+  // Phones (and desktop picking a dub) run frameXTV's own player: hand it the chosen language (the
+  // viewer's or the room's) by its index in frameXTV's list, after every load. Timing and look are
+  // out of reach there.
+  const ownSubIndex = ownFrameX ? subTracks.list.find((t) => t.url === subUrl)?.index : undefined;
   useEffect(() => {
     if (!player.ready || ownSubIndex === undefined) return;
     player.send('setSubtitle', { index: ownSubIndex });
